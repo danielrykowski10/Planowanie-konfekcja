@@ -2,7 +2,7 @@ import streamlit as st
 import datetime
 import pandas as pd
 
-# 1. Dane podstawowe
+# 1. Dane stałe i tłumaczenia
 DNI_PL = {
     "Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa",
     "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
@@ -19,155 +19,199 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista JIT - Zmiany 9/12h", layout="wide")
+st.set_page_config(page_title="Planista JIT - Raporty Osobne", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- LOGIKA PLANOWANIA ---
+# --- LOGIKA OBLICZEŃ JIT ---
 @st.cache_data
-def generuj_plan_jit(kolejka_tuple, data_dzis):
-    if not kolejka_tuple: return {}, []
+def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
+    if not kolejka_tuple:
+        return {}, [], pd.DataFrame()
     
     zadania = [dict(z) for z in kolejka_tuple]
-    # Sortowanie pod minimalizację przejść (wg terminu i art)
-    zadania = sorted(zadania, key=lambda x: (x['termin'], x['art']), reverse=True)
+    zadania = sorted(zadania, key=lambda x: x['termin'], reverse=True)
     
-    NORMA_9H = 540
+    limit_minut = 840
     plan_roboczy = {} 
-    raport_produkcji = []
+    wyniki_produkcji = []
 
     for z in zadania:
-        do_zrobienia = z['ile']
-        wyd = WYDAJNOSC.get(z["art"], 70)
+        ilosc_do_zrobienia = z['ile']
+        if ilosc_do_zrobienia <= 0: continue
         
-        # Planowanie wstecz od daty wysyłki
-        dzien = z['termin'] - datetime.timedelta(days=1)
-        if dzien < data_dzis: dzien = data_dzis
+        wyd = WYDAJNOSC.get(z["art"], 70)
+        dzien_planowania = z['termin'] - datetime.timedelta(days=1)
+        if dzien_planowania < data_dzisiejsza:
+            dzien_planowania = data_dzisiejsza
 
-        while do_zrobienia > 0:
-            d_key = dzien.strftime("%Y-%m-%d")
-            if d_key not in plan_roboczy: plan_roboczy[d_key] = NORMA_9H
+        while ilosc_do_zrobienia > 0:
+            d_key = dzien_planowania.strftime("%Y-%m-%d")
+            if d_key not in plan_roboczy:
+                plan_roboczy[d_key] = limit_minut
             
             wolny_czas = plan_roboczy[d_key]
-            
             if wolny_czas >= wyd:
-                ile_dzis = min(wolny_czas // wyd, do_zrobienia)
-                raport_produkcji.append({
-                    "data_sort": dzien,
-                    "Data": dzien.strftime("%d.%m"),
-                    "Art": z["art"],
+                ile_dzis = min(wolny_czas // wyd, ilosc_do_zrobienia)
+                wyniki_produkcji.append({
+                    "data_sort": dzien_planowania,
+                    "Data Produkcji": dzien_planowania.strftime("%d.%m"),
+                    "Miesiac": dzien_planowania.month,
+                    "Dzień": DNI_PL.get(dzien_planowania.strftime("%A")),
+                    "Artykuł": z["art"],
                     "Palety": int(ile_dzis),
                     "Kraj": z.get("kraj", "Czechy"),
-                    "Typ": "9H"
+                    "Data Wysyłki": z["termin"].strftime("%d.%m")
                 })
-                do_zrobienia -= ile_dzis
+                ilosc_do_zrobienia -= ile_dzis
                 plan_roboczy[d_key] -= (ile_dzis * wyd)
             
-            # Jeśli to data dzisiejsza i nadal mamy towar -> wrzucamy w nadgodziny
-            if dzien <= data_dzis and do_zrobienia > 0:
-                raport_produkcji.append({
-                    "data_sort": data_dzis,
-                    "Data": data_dzis.strftime("%d.%m"),
-                    "Art": z["art"],
-                    "Palety": int(do_zrobienia),
-                    "Kraj": z.get("kraj", "Czechy"),
-                    "Typ": "PONAD_9H"
-                })
-                do_zrobienia = 0
-            
-            dzien -= datetime.timedelta(days=1)
+            dzien_planowania -= datetime.timedelta(days=1)
+            if dzien_planowania < data_dzisiejsza:
+                if ilosc_do_zrobienia > 0:
+                    wyniki_produkcji.append({
+                        "data_sort": data_dzisiejsza,
+                        "Data Produkcji": data_dzisiejsza.strftime("%d.%m"),
+                        "Miesiac": data_dzisiejsza.month,
+                        "Dzień": DNI_PL.get(data_dzisiejsza.strftime("%A")),
+                        "Artykuł": z["art"],
+                        "Palety": int(ilosc_do_zrobienia),
+                        "Kraj": z.get("kraj", "Czechy"),
+                        "Data Wysyłki": z["termin"].strftime("%d.%m") + " ⚠️ PILNE"
+                    })
+                break
 
-    # Grupowanie wyników
-    dni_widok = {}
-    raport_lista = sorted(raport_produkcji, key=lambda x: (x['data_sort'], x['Art']))
-    
+    dni_wyswietl = {}
+    raport_lista = sorted(wyniki_produkcji, key=lambda x: x['data_sort'])
     for r in raport_lista:
-        dk = r['Data']
-        if dk not in dni_widok:
-            dni_widok[dk] = {"suma": 0, "p": [], "czy_12h": False, "dzien_pl": DNI_PL.get(r['data_sort'].strftime("%A"))}
-        dni_widok[dk]["p"].append(r)
-        dni_widok[dk]["suma"] += r["Palety"]
-        if r["Typ"] == "PONAD_9H": dni_widok[dk]["czy_12h"] = True
+        d_key = r['Data Produkcji']
+        if d_key not in dni_wyswietl:
+            dni_wyswietl[d_key] = {"dzien": r['Dzień'], "suma": 0, "p": []}
+        dni_wyswietl[d_key]["p"].append(r)
+        dni_wyswietl[d_key]["suma"] += r["Palety"]
     
-    return dni_widok, raport_lista
+    return dni_wyswietl, raport_lista
 
-# --- INTERFEJS ---
-st.title("🥛 Planista Produkcji - Optymalizacja Pracy")
-
+# --- PANEL BOCZNY ---
 with st.sidebar:
-    st.header("Zarządzanie")
-    if st.button("➕ DODAJ ZAMÓWIENIE", type="primary"): st.session_state.show_form = True
-    if st.button("🗑️ WYCZYŚĆ PLAN"):
+    st.header("⚙️ Zarządzanie")
+    if st.button("➕ DODAJ NOWE ZAMÓWIENIE", type="primary", use_container_width=True):
+        st.session_state.pokaz_okno = True
+    
+    if st.button("🗑️ WYCZYŚĆ CAŁY PLAN", use_container_width=True):
         st.session_state.kolejka = []
+        st.cache_data.clear()
         st.rerun()
-    st.divider()
-    # Edycja
-    if st.session_state.kolejka:
-        st.subheader("Edycja")
-        daty_w = sorted(list(set([z['termin'] for z in st.session_state.kolejka])))
-        for d in daty_w:
-            with st.expander(f"Wysyłka {d.strftime('%d.%m')}"):
-                if st.button("Usuń", key=f"btn_{d}"):
-                    st.session_state.kolejka = [z for z in st.session_state.kolejka if z['termin'] != d]
-                    st.rerun()
 
-if st.session_state.get('show_form'):
-    with st.form("new_order"):
+    st.divider()
+    
+    if st.session_state.kolejka:
+        st.subheader("✏️ Edycja i Kraje")
+        daty_wysylki = sorted(list(set([z['termin'] for z in st.session_state.kolejka])))
+        
+        for data in daty_wysylki:
+            col_label, col_bin = st.columns([4, 1])
+            col_label.markdown(f"📅 **Wysyłka {data.strftime('%d.%m')}**")
+            
+            if col_bin.button("🗑️", key=f"bin_{data}"):
+                st.session_state.kolejka = [z for z in st.session_state.kolejka if z['termin'] != data]
+                st.cache_data.clear()
+                st.rerun()
+
+            with st.expander("Szczegóły"):
+                for i, item in enumerate(st.session_state.kolejka):
+                    if item['termin'] == data:
+                        st.write(f"--- Art: {item['art']} ---")
+                        n_kraj = st.selectbox("Kraj:", ["Czechy", "Słowacja"], 
+                                             index=0 if item.get('kraj') == "Czechy" else 1,
+                                             key=f"kraj_e_{i}")
+                        n_ile = st.number_input("Palety:", value=int(item['ile']), key=f"ile_e_{i}")
+                        
+                        if n_kraj != item.get('kraj') or n_ile != item['ile']:
+                            st.session_state.kolejka[i]['kraj'] = n_kraj
+                            st.session_state.kolejka[i]['ile'] = n_ile
+                            st.cache_data.clear()
+                            if st.button("Zapisz", key=f"btn_e_{i}"): st.rerun()
+
+# --- FORMULARZ ---
+if st.session_state.get('pokaz_okno'):
+    with st.container():
+        st.markdown("### 📝 Dodaj zamówienie")
         c1, c2 = st.columns(2)
-        kraj = c1.selectbox("Kierunek:", ["Czechy", "Słowacja"])
-        termin = c2.date_input("Data wysyłki:", datetime.date.today() + datetime.timedelta(days=2))
-        st.write("Ilości palet:")
-        cols = st.columns(3)
-        nowe = []
-        for i, art in enumerate(WYDAJNOSC.keys()):
-            with cols[i % 3]:
-                v = st.number_input(f"Art {art}", min_value=0, key=f"in_{art}")
-                if v > 0: nowe.append({"art": art, "ile": v})
-        if st.form_submit_button("DODAJ"):
-            for n in nowe: st.session_state.kolejka.append({"art": n['art'], "ile": n['ile'], "termin": termin, "kraj": kraj})
-            st.session_state.show_form = False
+        kraj_nowy = c1.selectbox("Kierunek:", ["Czechy", "Słowacja"])
+        dt_wys = c2.date_input("Wysyłka:", datetime.date.today() + datetime.timedelta(days=3))
+        
+        c = st.columns(2)
+        pobrane = []
+        for i, art_id in enumerate(WYDAJNOSC.keys()):
+            with c[i % 2]:
+                val = st.number_input(f"Art {art_id}", min_value=0, key=f"n_{art_id}")
+                if val > 0: pobrane.append({"art": art_id, "ile": val})
+        
+        if st.button("ZATWIERDŹ"):
+            for p in pobrane:
+                st.session_state.kolejka.append({"art": p["art"], "ile": p["ile"], "termin": dt_wys, "kraj": kraj_nowy})
+            st.session_state.pokaz_okno = False
             st.rerun()
 
-# --- WIDOK ---
+# --- WIDOK GŁÓWNY ---
+st.title("🥛 Planista Produkcji JIT")
+
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
-    dni, raport = generuj_plan_jit(k_tuple, datetime.date.today())
-    
-    st.subheader("🗓️ Harmonogram Dzienny")
-    cols = st.columns(5)
+    dni, raport_surowy = generuj_dane_jit(k_tuple, datetime.date.today())
+    df_full = pd.DataFrame(raport_surowy)
+
+    # 1. HARMONOGRAM
+    st.subheader("🗓️ Harmonogram Produkcji")
+    siatka = st.columns(5)
     for i, dk in enumerate(sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
-        with cols[i % 5]:
-            d_info = dni[dk]
-            label_zmiana = "⚠️ ZMIANA 12H" if d_info["czy_12h"] else "✅ ZMIANA 9H"
-            kolor_ramki = "#ff4b4b" if d_info["czy_12h"] else "#ddd"
-            
-            st.markdown(f"""
-                <div style="border:2px solid {kolor_ramki}; border-radius:10px; padding:10px; background-color:white; margin-bottom:10px;">
-                    <b style="font-size:18px;">{dk}</b> <small>{d_info['dzien_pl']}</small><br>
-                    <span style="color:{'red' if d_info['czy_12h'] else 'green'}; font-weight:bold;">{label_zmiana}</span><br>
-                    <b>Suma: {d_info['suma']} pal.</b><hr style="margin:5px 0;">
-            """, unsafe_allow_html=True)
-            
-            for p in d_info["p"]:
-                style = "background-color:#d4edda;" if p["Kraj"] == "Słowacja" else ""
-                alert = " <span style='color:red; font-size:11px;'>!</span>" if p["Typ"] == "PONAD_9H" else ""
-                st.markdown(f"<div style='{style} padding:2px; border-radius:3px;'><b>{p['Art']}</b>: {p['Palety']} pal.{alert}</div>", unsafe_allow_html=True)
+        with siatka[i % 5]:
+            info = dni[dk]
+            st.markdown(f"""<div style="border:1px solid #ddd; border-radius:10px; padding:8px; background-color:#f8f9fa;">
+                <b style="color:#1f77b4;">{dk}</b> ({info['dzien']})<br>
+                <b>Suma: {info['suma']} pal.</b><hr style="margin:4px 0;">""", unsafe_allow_html=True)
+            for p in info["p"]:
+                bg = "#d4edda" if p["Kraj"] == "Słowacja" else "transparent"
+                st.markdown(f"""<div style="background-color:{bg}; padding:2px 5px; border-radius:4px; margin-bottom:2px;">
+                    <b>{p['Artykuł']}</b>: {p['Palety']} pal. <br><small>({p['Kraj']})</small>
+                </div>""", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # Statystyki na dole
+    # 2. PODSUMOWANIE MIESIĘCZNE ODDZIELNIE
     st.divider()
-    df = pd.DataFrame(raport)
-    df["Miesiąc"] = df["Miesiac"].map(MIESIACE_PL)
-    c_cz, c_sk = st.columns(2)
-    with c_cz:
-        st.write("#### 🇨🇿 CZECHY")
-        df_cz = df[df["Kraj"] == "Czechy"]
-        if not df_cz.empty: st.dataframe(df_cz.pivot_table(index="Art", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0), use_container_width=True)
-    with c_sk:
-        st.write("#### 🇸🇰 SŁOWACJA")
-        df_sk = df[df["Kraj"] == "Słowacja"]
-        if not df_sk.empty: st.dataframe(df_sk.pivot_table(index="Art", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0), use_container_width=True)
+    st.subheader("📊 Podsumowanie Asortymentu (Miesięcznie)")
+    df_full["Miesiąc"] = df_full["Miesiac"].map(MIESIACE_PL)
 
-else:
-    st.info("Dodaj zamówienie, aby zobaczyć plan.")
+    col_cz, col_sk = st.columns(2)
+    
+    with col_cz:
+        st.markdown("#### 🇨🇿 CZECHY")
+        df_cz = df_full[df_full["Kraj"] == "Czechy"]
+        if not df_cz.empty:
+            pivot_cz = df_cz.pivot_table(index="Artykuł", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0)
+            st.dataframe(pivot_cz, use_container_width=True)
+        else:
+            st.write("Brak zamówień na Czechy.")
+
+    with col_sk:
+        st.markdown("#### 🇸🇰 SŁOWACJA")
+        df_sk = df_full[df_full["Kraj"] == "Słowacja"]
+        if not df_sk.empty:
+            pivot_sk = df_sk.pivot_table(index="Artykuł", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0)
+            # Stylowanie tabeli na zielono, żeby pasowała do harmonogramu
+            st.dataframe(pivot_sk, use_container_width=True)
+        else:
+            st.write("Brak zamówień na Słowację.")
+
+    # 3. WYSYŁKI
+    st.divider()
+    st.subheader("🚚 Szczegóły Wysyłek Dziennych")
+    df_wys = df_full.groupby(["Data Wysyłki", "Kraj", "Artykuł"])["Palety"].sum().reset_index()
+    for data in df_wys["Data Wysyłki"].unique():
+        sum_d = df_wys[df_wys["Data Wysyłki"] == data]["Palety"].sum()
+        with st.expander(f"📅 Wysyłka: {data} (Łącznie: {sum_d} pal.)"):
+            st.table(df_wys[df_wys["Data Wysyłki"] == data][["Kraj", "Artykuł", "Palety"]])
+
+else: st.info("Brak zamówień.")
