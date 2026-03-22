@@ -19,12 +19,11 @@ st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- LINIOWE PLANOWANIE W PRZÓD (PRIORYTET DATY WYSYŁKI) ---
+# --- PLANOWANIE W PRZÓD (Z WYMUSZANIEM NADGODZIN ZAMIAST OPÓŹNIEŃ) ---
 @st.cache_data
 def generuj_plan_forward(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
 
-    # Pobieramy zamówienia (sortowanie tutaj nie wystarczy, będziemy dobierać dynamicznie)
     zadania = [dict(z) for z in kolejka_tuple]
     
     plan_dni = {}
@@ -33,17 +32,17 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
     ostatni_art = None
     
     while zadania:
-        # 1. Zawsze szukamy zadania z NAJBLIŻSZĄ datą wysyłki
+        # 1. Zawsze bierzemy najpierw zamówienie z najbliższą wysyłką
         najblizsza_wysylka = min(z['termin'] for z in zadania)
         
-        # 2. Szukamy tego samego artykułu (by nie przezbrajać maszyny) dla najpilniejszej daty
+        # 2. Szukamy kontynuacji artykułu
         idx_wybranego = -1
         for i, z in enumerate(zadania):
             if z['termin'] == najblizsza_wysylka and z['art'] == ostatni_art:
                 idx_wybranego = i
                 break
         
-        # 3. Jeśli nie ma kontynuacji, bierzemy pierwsze zamówienie z najbliższej daty
+        # 3. Brak kontynuacji -> pierwsze z brzegu dla najpilniejszej daty
         if idx_wybranego == -1:
             for i, z in enumerate(zadania):
                 if z['termin'] == najblizsza_wysylka:
@@ -54,7 +53,6 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
         ile = z['ile']
         wyd = WYDAJNOSC.get(z["art"], 70)
         
-        # Planujemy ZAWSZE zaczynając od dzisiaj, aby wypełniać luki
         data_kursora = data_dzis
         
         while ile > 0:
@@ -68,36 +66,44 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                 
             wolny_czas = plan_dni[d_key]
             
-            # BLOKADA 1 ZMIANY W DNIU WYSYŁKI
-            # Skoro wolny_czas spada od 840 do 0, pierwsza zmiana to czas > 420.
+            # W dniu wysyłki mamy tylko 1 zmianę (420 min) do dyspozycji
             if data_kursora == z['termin']:
                 dostepny_czas = max(0, wolny_czas - 420)
             else:
                 dostepny_czas = wolny_czas
                 
-            if dostepny_czas >= wyd:
-                produkcja = min(dostepny_czas // wyd, ile)
-                if produkcja > 0:
-                    status_opoznienia = data_kursora > z['termin']
-                    raport.append({
-                        "Data": data_kursora.strftime("%d.%m"),
-                        "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
-                        "Art": z["art"],
-                        "Palety": int(produkcja),
-                        "Kraj": z.get("kraj", "Czechy"),
-                        "Wysyłka": z["termin"].strftime("%d.%m"),
-                        "dt_sort": data_kursora,
-                        "Opóźnione": status_opoznienia
-                    })
-                    ile -= produkcja
-                    plan_dni[d_key] -= (produkcja * wyd)
-                    ostatni_art = z["art"]
+            produkcja = min(dostepny_czas // wyd, ile)
+            nadgodziny = False
+            
+            # --- KLUCZOWA ZMIANA: WYMUSZANIE NADGODZIN ---
+            # Sprawdzamy, czy jutrzejszy dzień roboczy nie przekracza daty wysyłki
+            jutro = data_kursora + datetime.timedelta(days=1)
+            if jutro.weekday() == 6:
+                jutro += datetime.timedelta(days=1)
+                
+            # Jeśli jutro jest "za późno", a towar nam został, dopychamy go do dzisiaj!
+            if jutro > z['termin'] and ile > produkcja:
+                produkcja = ile
+                nadgodziny = True
+
+            if produkcja > 0:
+                raport.append({
+                    "Data": data_kursora.strftime("%d.%m"),
+                    "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
+                    "Art": z["art"],
+                    "Palety": int(produkcja),
+                    "Kraj": z.get("kraj", "Czechy"),
+                    "Wysyłka": z["termin"].strftime("%d.%m"),
+                    "dt_sort": data_kursora,
+                    "Nadgodziny": nadgodziny
+                })
+                ile -= produkcja
+                plan_dni[d_key] -= (produkcja * wyd)
+                ostatni_art = z["art"]
             
             if ile > 0:
-                # Brak miejsca dzisiaj -> idziemy na jutro
                 data_kursora += datetime.timedelta(days=1)
 
-    # Grupowanie asortymentu w kafelkach
     widok = {}
     raport = sorted(raport, key=lambda x: (x['dt_sort'], x['Art']))
     for r in raport:
@@ -182,11 +188,12 @@ if st.session_state.kolejka:
                 text_col = "#000"
                 alert = ""
                 
-                if p.get('Opóźnione'):
-                    bg = "#ffebee" 
-                    border_col = "#ffcdd2"
-                    text_col = "#b71c1c"
-                    alert = "<br><span style='color:red; font-weight:bold; font-size:10px;'>⚠️ OPÓŹNIENIE</span>"
+                # Zamiast błędu, wyświetlamy polecenie wydłużenia zmiany
+                if p.get('Nadgodziny'):
+                    bg = "#fff3e0" 
+                    border_col = "#ffcc80"
+                    text_col = "#e65100"
+                    alert = "<br><span style='color:#e65100; font-weight:bold; font-size:10px;'>⚠️ WYDŁUŻONA ZMIANA (np. 9h)</span>"
                 
                 st.markdown(f"""<div style="background-color:{bg}; padding:5px; border-radius:5px; margin-bottom:4px; border:1px solid {border_col}; font-size:12px; color:{text_col};">
                     <b>{p['Art']}</b>: {p['Palety']} pal.{alert}<br>
