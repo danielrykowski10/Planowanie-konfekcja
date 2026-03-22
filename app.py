@@ -19,99 +19,83 @@ st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- NOWY SILNIK PLANOWANIA (PRIORYTET TERMINU + CIĄGŁOŚĆ PRODUKCJI) ---
+# --- PRAWDZIWE PLANOWANIE WSTECZ (GWARANCJA JIT) ---
 @st.cache_data
-def generuj_plan_priorytet_wysylki(kolejka_tuple, data_dzis):
+def generuj_plan_wstecz(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
 
-    # 1. Sortujemy kolejkę: NAJPIERW NAJBLIŻSZY TERMIN WYSYŁKI
+    # Najpierw najbliższe wysyłki, żeby zablokowały miejsce dla siebie
     zadania = [dict(z) for z in kolejka_tuple]
-    zadania = sorted(zadania, key=lambda x: x['termin'])
+    zadania = sorted(zadania, key=lambda x: (x['termin'], x['art']))
     
-    plan_produkcji = []
-    daily_capacity = {}
+    plan_dni = {}
+    raport = []
+    CZAS_NETTO = 840 # 2 zmiany po 7h netto pracy (14h)
     
-    # Kursor planowania zaczyna od jutra (zakładając, że dziś już zaplanowane)
-    # Można zmienić na data_dzis, jeśli planujecie na bieżąco.
-    data_kursora = data_dzis #+ datetime.timedelta(days=1)
-    
-    # Realne limity czasowe (netto)
-    CZAS_NETTO = 420  # 7h netto pracy na zmianę
-    MAX_2_ZMIANY = 840 # 14h netto pracy (2 zmiany)
-    ostatni_artykul = None
-
-    while zadania:
-        # Pomiń niedziele
-        if data_kursora.weekday() == 6:
-            data_kursora += datetime.timedelta(days=1)
-            continue
-            
-        d_key = data_kursora.strftime("%Y-%m-%d")
-        if d_key not in daily_capacity:
-            daily_capacity[d_key] = MAX_2_ZMIANY
-            
-        cap = daily_capacity[d_key]
-        
-        if cap < 52.5: # Za mało miejsca na najszybszą paletę, idź do jutra
-            data_kursora += datetime.timedelta(days=1)
-            continue
-
-        # WYBÓR ZADANIA (Priorytet terminu + unikanie przezbrojeń)
-        najblizsza_wysylka = zadania[0]['termin']
-        idx_wybranego = 0
-        
-        # Sprawdzamy czy w grupie zamówień na najbliższy termin jest ciągłość artykułu
-        for i, z in enumerate(zadania):
-            if z['termin'] == najblizsza_wysylka:
-                if z['art'] == ostatni_artykul:
-                    idx_wybranego = i
-                    break
-            else:
-                break # Przeszukaliśmy całą grupę najpilniejszych
-
-        z = zadania[idx_wybranego]
+    for z in zadania:
+        ile = z['ile']
         wyd = WYDAJNOSC.get(z["art"], 70)
         
-        ile_moze_wejsc = cap // wyd
+        # Startujemy OD DATY WYSYŁKI i jedziemy w tył
+        data_kursora = z['termin']
         
-        if ile_moze_wejsc > 0:
-            produkcja = min(ile_moze_wejsc, z['ile'])
+        # Jeśli wysyłka wypada w niedzielę, cofnij produkcję na sobotę
+        if data_kursora.weekday() == 6:
+            data_kursora -= datetime.timedelta(days=1)
             
-            # Sprawdzenie opóźnienia
-            status_opoznienia = data_kursora > z['termin']
+        while ile > 0:
+            # Blokada przeszłości - nie planujemy wczoraj
+            if data_kursora < data_dzis:
+                data_kursora = data_dzis
+                
+            d_key = data_kursora.strftime("%Y-%m-%d")
+            if d_key not in plan_dni:
+                plan_dni[d_key] = CZAS_NETTO
+                
+            wolny_czas = plan_dni[d_key]
             
-            plan_produkcji.append({
-                "Data": data_kursora.strftime("%d.%m"),
-                "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
-                "Art": z["art"],
-                "Palety": int(produkcja),
-                "Kraj": z.get("kraj", "Czechy"),
-                "Wysyłka": z["termin"].strftime("%d.%m"),
-                "dt_sort": data_kursora,
-                "Opóźnione": status_opoznienia
-            })
-            
-            z['ile'] -= produkcja
-            daily_capacity[d_key] -= (produkcja * wyd)
-            ostatni_artykul = z["art"]
-            
-            # Jeśli zadanie skończone, usuń z kolejki
-            if z['ile'] <= 0:
-                zadania.pop(idx_wybranego)
-        else:
-             # Artykuł nie mieści się dziś wcale -> następny dzień
-             data_kursora += datetime.timedelta(days=1)
+            # Jeśli dotarliśmy do "dzisiaj", system ładuje resztę i wymusza nadgodziny
+            if data_kursora == data_dzis:
+                produkcja = ile
+                czy_pilne = wolny_czas < (produkcja * wyd)
+            else:
+                # Normalne planowanie wg mocy maszyn
+                produkcja = min(wolny_czas // wyd, ile)
+                czy_pilne = False
+                
+            if produkcja > 0:
+                raport.append({
+                    "Data": data_kursora.strftime("%d.%m"),
+                    "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
+                    "Art": z["art"],
+                    "Palety": int(produkcja),
+                    "Kraj": z.get("kraj", "Czechy"),
+                    "Wysyłka": z["termin"].strftime("%d.%m"),
+                    "dt_sort": data_kursora,
+                    "Pilne": czy_pilne
+                })
+                ile -= produkcja
+                plan_dni[d_key] -= (produkcja * wyd)
+                
+            if ile > 0:
+                # Skończyło się miejsce w danym dniu -> COFAMY SIĘ O DZIEŃ WSTECZ
+                if data_kursora == data_dzis:
+                    break # Zabezpieczenie pętli
+                
+                data_kursora -= datetime.timedelta(days=1)
+                if data_kursora.weekday() == 6: # Przeskakujemy niedzielę
+                    data_kursora -= datetime.timedelta(days=1)
 
-    # Grupowanie chronologiczne pod kafelki
     widok = {}
-    plan_wynik = sorted(plan_produkcji, key=lambda x: (x['dt_sort'], x['Art']))
-    for r in plan_wynik:
+    # Układamy kafelki po dacie, a w nich grupujemy artykuły
+    raport = sorted(raport, key=lambda x: (x['dt_sort'], x['Art']))
+    for r in raport:
         dk = r['Data']
         if dk not in widok: 
             widok[dk] = {"dz": r['Dzień'], "suma": 0, "p": []}
         widok[dk]["p"].append(r)
         widok[dk]["suma"] += r["Palety"]
-    return widok, plan_produkcji
+    return widok, raport
 
 # --- INTERFEJS UŻYTKOWNIKA ---
 with st.sidebar:
@@ -166,14 +150,13 @@ if st.session_state.get('pokaz_f'):
             st.session_state.pokaz_f = False
             st.rerun()
 
-# --- USUNIĘTY NAPIS "Planista Produkcji JIT" ---
 st.title("Konfekcja SM - Harmonogram Produkcji")
 
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
-    dni, raport_surowy = generuj_plan_priorytet_wysylki(k_tuple, datetime.date.today())
+    dni, raport_surowy = generuj_plan_wstecz(k_tuple, datetime.date.today())
 
-    st.subheader("🗓️ Realny Plan Produkcji (Dociążanie zmian 14h netto)")
+    st.subheader("🗓️ Realny Plan Produkcji (System Pull / Wsteczny)")
     grid = st.columns(5)
     sorted_keys = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
     for i, dk in enumerate(sorted_keys):
@@ -186,33 +169,48 @@ if st.session_state.kolejka:
                 bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
                 border_col = "#eee"
                 text_col = "#000"
-                if p.get('Opóźnione'):
-                    bg = "#ffebee" # Czerwone tło dla opóźnień
+                alert = ""
+                
+                if p.get('Pilne'):
+                    bg = "#ffebee" 
                     border_col = "#ffcdd2"
                     text_col = "#b71c1c"
+                    alert = "<br><span style='color:red; font-weight:bold; font-size:10px;'>⚠️ BRAK MOCY - NADGODZINY</span>"
                 
                 st.markdown(f"""<div style="background-color:{bg}; padding:5px; border-radius:5px; margin-bottom:4px; border:1px solid {border_col}; font-size:12px; color:{text_col};">
-                    <b>{p['Art']}</b>: {p['Palety']} pal.<br>
+                    <b>{p['Art']}</b>: {p['Palety']} pal.{alert}<br>
                     <small>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</small>
                 </div>""", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # Tabela Kontrolna
+    # BEZPIECZNA TABELA KONTROLNA (Odporna na błędy)
     st.divider()
     st.subheader("🔍 Kontrola zgodności zamówień")
+    
+    # Przetwarzanie zamówień wejściowych
+    df_z = pd.DataFrame(st.session_state.kolejka)
+    df_z['Wysyłka'] = df_z['termin'].apply(lambda x: x.strftime("%d.%m"))
+    res = df_z.groupby(['Wysyłka', 'kraj', 'art'])['ile'].sum().reset_index()
+    res = res.rename(columns={'kraj': 'Kraj', 'art': 'Art', 'ile': 'Zamówiono (pal)'})
+    
     if raport_surowy:
-        df_z = pd.DataFrame(st.session_state.kolejka)
-        df_z['Data Wysyłki'] = df_z['termin'].apply(lambda x: x.strftime("%d.%m"))
+        # Przetwarzanie wygenerowanego raportu
         df_r = pd.DataFrame(raport_surowy)
-        
-        res = df_z.groupby(['Data Wysyłki', 'kraj', 'art'])['ile'].sum().reset_index()
         res_r = df_r.groupby(['Wysyłka', 'Kraj', 'Art'])['Palety'].sum().reset_index()
+        res_r = res_r.rename(columns={'Palety': 'Zaplanowano (pal)'})
         
-        final = pd.merge(res, res_r, left_on=['Data Wysyłki', 'kraj', 'art'], right_on=['Wysyłka', 'Kraj', 'Art'], how='left').fillna(0)
-        final.columns = ['Termin Wysyłki', 'Kraj', 'Artykuł', 'Zamówiono (pal)', 'Zaplanowano (pal)']
-        final['Status'] = final.apply(lambda x: "✅ OK" if x['Zamówiono (pal)'] == x['Zaplanowano (pal)'] else "❌ BŁĄD", axis=1)
-        st.table(final)
+        # Bezpieczne łączenie danych po tych samych kolumnach
+        final = pd.merge(res, res_r, on=['Wysyłka', 'Kraj', 'Art'], how='left').fillna(0)
     else:
-        st.warning("Błąd generowania danych kontrolnych.")
+        # Jeśli raport jest z jakiegoś powodu pusty
+        final = res.copy()
+        final['Zaplanowano (pal)'] = 0
+        
+    final = final[['Wysyłka', 'Kraj', 'Art', 'Zamówiono (pal)', 'Zaplanowano (pal)']]
+    final.columns = ['Termin Wysyłki', 'Kraj', 'Artykuł', 'Zamówiono (pal)', 'Zaplanowano (pal)']
+    final['Status'] = final.apply(lambda x: "✅ OK" if x['Zamówiono (pal)'] == x['Zaplanowano (pal)'] else "❌ BŁĄD", axis=1)
+    
+    st.table(final)
+
 else:
     st.info("Brak zamówień. Dodaj je w panelu bocznym.")
