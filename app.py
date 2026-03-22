@@ -2,7 +2,7 @@ import streamlit as st
 import datetime
 import pandas as pd
 
-# 1. Dane stałe i tłumaczenia
+# 1. Dane stałe
 DNI_PL = {
     "Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa",
     "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
@@ -19,34 +19,48 @@ st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- PRAWDZIWE PLANOWANIE WSTECZ (GWARANCJA JIT) ---
+# --- LINIOWE PLANOWANIE W PRZÓD (PRIORYTET DATY WYSYŁKI) ---
 @st.cache_data
-def generuj_plan_wstecz(kolejka_tuple, data_dzis):
+def generuj_plan_forward(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
 
-    # Najpierw najbliższe wysyłki, żeby zablokowały miejsce dla siebie
+    # Pobieramy zamówienia (sortowanie tutaj nie wystarczy, będziemy dobierać dynamicznie)
     zadania = [dict(z) for z in kolejka_tuple]
-    zadania = sorted(zadania, key=lambda x: (x['termin'], x['art']))
     
     plan_dni = {}
     raport = []
-    CZAS_NETTO = 840 # 2 zmiany po 7h netto pracy (14h)
+    CZAS_NETTO = 840 # 2 zmiany po 7h netto pracy (14h łącznie)
+    ostatni_art = None
     
-    for z in zadania:
+    while zadania:
+        # 1. Zawsze szukamy zadania z NAJBLIŻSZĄ datą wysyłki
+        najblizsza_wysylka = min(z['termin'] for z in zadania)
+        
+        # 2. Szukamy tego samego artykułu (by nie przezbrajać maszyny) dla najpilniejszej daty
+        idx_wybranego = -1
+        for i, z in enumerate(zadania):
+            if z['termin'] == najblizsza_wysylka and z['art'] == ostatni_art:
+                idx_wybranego = i
+                break
+        
+        # 3. Jeśli nie ma kontynuacji, bierzemy pierwsze zamówienie z najbliższej daty
+        if idx_wybranego == -1:
+            for i, z in enumerate(zadania):
+                if z['termin'] == najblizsza_wysylka:
+                    idx_wybranego = i
+                    break
+
+        z = zadania.pop(idx_wybranego)
         ile = z['ile']
         wyd = WYDAJNOSC.get(z["art"], 70)
         
-        # Startujemy OD DATY WYSYŁKI i jedziemy w tył
-        data_kursora = z['termin']
+        # Planujemy ZAWSZE zaczynając od dzisiaj, aby wypełniać luki
+        data_kursora = data_dzis
         
-        # Jeśli wysyłka wypada w niedzielę, cofnij produkcję na sobotę
-        if data_kursora.weekday() == 6:
-            data_kursora -= datetime.timedelta(days=1)
-            
         while ile > 0:
-            # Blokada przeszłości - nie planujemy wczoraj
-            if data_kursora < data_dzis:
-                data_kursora = data_dzis
+            if data_kursora.weekday() == 6: # Pomijamy niedziele
+                data_kursora += datetime.timedelta(days=1)
+                continue
                 
             d_key = data_kursora.strftime("%Y-%m-%d")
             if d_key not in plan_dni:
@@ -54,40 +68,37 @@ def generuj_plan_wstecz(kolejka_tuple, data_dzis):
                 
             wolny_czas = plan_dni[d_key]
             
-            # Jeśli dotarliśmy do "dzisiaj", system ładuje resztę i wymusza nadgodziny
-            if data_kursora == data_dzis:
-                produkcja = ile
-                czy_pilne = wolny_czas < (produkcja * wyd)
+            # BLOKADA 1 ZMIANY W DNIU WYSYŁKI
+            # Skoro wolny_czas spada od 840 do 0, pierwsza zmiana to czas > 420.
+            if data_kursora == z['termin']:
+                dostepny_czas = max(0, wolny_czas - 420)
             else:
-                # Normalne planowanie wg mocy maszyn
-                produkcja = min(wolny_czas // wyd, ile)
-                czy_pilne = False
+                dostepny_czas = wolny_czas
                 
-            if produkcja > 0:
-                raport.append({
-                    "Data": data_kursora.strftime("%d.%m"),
-                    "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
-                    "Art": z["art"],
-                    "Palety": int(produkcja),
-                    "Kraj": z.get("kraj", "Czechy"),
-                    "Wysyłka": z["termin"].strftime("%d.%m"),
-                    "dt_sort": data_kursora,
-                    "Pilne": czy_pilne
-                })
-                ile -= produkcja
-                plan_dni[d_key] -= (produkcja * wyd)
-                
+            if dostepny_czas >= wyd:
+                produkcja = min(dostepny_czas // wyd, ile)
+                if produkcja > 0:
+                    status_opoznienia = data_kursora > z['termin']
+                    raport.append({
+                        "Data": data_kursora.strftime("%d.%m"),
+                        "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
+                        "Art": z["art"],
+                        "Palety": int(produkcja),
+                        "Kraj": z.get("kraj", "Czechy"),
+                        "Wysyłka": z["termin"].strftime("%d.%m"),
+                        "dt_sort": data_kursora,
+                        "Opóźnione": status_opoznienia
+                    })
+                    ile -= produkcja
+                    plan_dni[d_key] -= (produkcja * wyd)
+                    ostatni_art = z["art"]
+            
             if ile > 0:
-                # Skończyło się miejsce w danym dniu -> COFAMY SIĘ O DZIEŃ WSTECZ
-                if data_kursora == data_dzis:
-                    break # Zabezpieczenie pętli
-                
-                data_kursora -= datetime.timedelta(days=1)
-                if data_kursora.weekday() == 6: # Przeskakujemy niedzielę
-                    data_kursora -= datetime.timedelta(days=1)
+                # Brak miejsca dzisiaj -> idziemy na jutro
+                data_kursora += datetime.timedelta(days=1)
 
+    # Grupowanie asortymentu w kafelkach
     widok = {}
-    # Układamy kafelki po dacie, a w nich grupujemy artykuły
     raport = sorted(raport, key=lambda x: (x['dt_sort'], x['Art']))
     for r in raport:
         dk = r['Data']
@@ -97,7 +108,7 @@ def generuj_plan_wstecz(kolejka_tuple, data_dzis):
         widok[dk]["suma"] += r["Palety"]
     return widok, raport
 
-# --- INTERFEJS UŻYTKOWNIKA ---
+# --- PANEL BOCZNY ---
 with st.sidebar:
     st.markdown("""
         <style>
@@ -154,9 +165,9 @@ st.title("Konfekcja SM - Harmonogram Produkcji")
 
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
-    dni, raport_surowy = generuj_plan_wstecz(k_tuple, datetime.date.today())
+    dni, raport_surowy = generuj_plan_forward(k_tuple, datetime.date.today())
 
-    st.subheader("🗓️ Realny Plan Produkcji (System Pull / Wsteczny)")
+    st.subheader("🗓️ Realny Plan Produkcji")
     grid = st.columns(5)
     sorted_keys = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
     for i, dk in enumerate(sorted_keys):
@@ -171,11 +182,11 @@ if st.session_state.kolejka:
                 text_col = "#000"
                 alert = ""
                 
-                if p.get('Pilne'):
+                if p.get('Opóźnione'):
                     bg = "#ffebee" 
                     border_col = "#ffcdd2"
                     text_col = "#b71c1c"
-                    alert = "<br><span style='color:red; font-weight:bold; font-size:10px;'>⚠️ BRAK MOCY - NADGODZINY</span>"
+                    alert = "<br><span style='color:red; font-weight:bold; font-size:10px;'>⚠️ OPÓŹNIENIE</span>"
                 
                 st.markdown(f"""<div style="background-color:{bg}; padding:5px; border-radius:5px; margin-bottom:4px; border:1px solid {border_col}; font-size:12px; color:{text_col};">
                     <b>{p['Art']}</b>: {p['Palety']} pal.{alert}<br>
@@ -183,26 +194,22 @@ if st.session_state.kolejka:
                 </div>""", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # BEZPIECZNA TABELA KONTROLNA (Odporna na błędy)
+    # BEZPIECZNA TABELA KONTROLNA 
     st.divider()
     st.subheader("🔍 Kontrola zgodności zamówień")
     
-    # Przetwarzanie zamówień wejściowych
     df_z = pd.DataFrame(st.session_state.kolejka)
     df_z['Wysyłka'] = df_z['termin'].apply(lambda x: x.strftime("%d.%m"))
     res = df_z.groupby(['Wysyłka', 'kraj', 'art'])['ile'].sum().reset_index()
     res = res.rename(columns={'kraj': 'Kraj', 'art': 'Art', 'ile': 'Zamówiono (pal)'})
     
     if raport_surowy:
-        # Przetwarzanie wygenerowanego raportu
         df_r = pd.DataFrame(raport_surowy)
         res_r = df_r.groupby(['Wysyłka', 'Kraj', 'Art'])['Palety'].sum().reset_index()
         res_r = res_r.rename(columns={'Palety': 'Zaplanowano (pal)'})
         
-        # Bezpieczne łączenie danych po tych samych kolumnach
         final = pd.merge(res, res_r, on=['Wysyłka', 'Kraj', 'Art'], how='left').fillna(0)
     else:
-        # Jeśli raport jest z jakiegoś powodu pusty
         final = res.copy()
         final['Zaplanowano (pal)'] = 0
         
