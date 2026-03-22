@@ -14,23 +14,25 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista Produkcji", layout="wide")
+st.set_page_config(page_title="Planista Produkcji - Pełne Zmiany", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- LOGIKA PLANOWANIA (SZYBKA) ---
+# --- LOGIKA PLANOWANIA Z DOCIĄŻANIEM ZMIAN ---
 @st.cache_data
 def generuj_plan(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
 
-    # Sortowanie po dacie wysyłki (najpierw te, co wyjeżdżają najwcześniej)
+    # Sortowanie po dacie wysyłki (najpierw te najwcześniejsze)
     zadania = sorted([dict(z) for z in kolejka_tuple], key=lambda x: x['termin'])
     
     plan_dni = {}
     raport_produkcji = []
     data_kursora = data_dzis
-    LIMIT = 480 # 8h zmiany
+    
+    LIMIT_1_ZMIANA = 480 # 8h
+    LIMIT_2_ZMIANY = 960 # 16h
 
     for z in zadania:
         ile = z['ile']
@@ -39,12 +41,15 @@ def generuj_plan(kolejka_tuple, data_dzis):
         while ile > 0:
             d_key = data_kursora.strftime("%Y-%m-%d")
             
-            # Jeśli kursor daty przekroczył termin wysyłki, wracamy do dzisiaj (produkcja ratunkowa)
+            # Jeśli kursor przekroczył termin wysyłki, wracamy do dzisiaj
             if data_kursora > z['termin']: 
                 data_kursora = data_dzis
                 d_key = data_kursora.strftime("%Y-%m-%d")
             
-            if d_key not in plan_dni: plan_dni[d_key] = LIMIT
+            if d_key not in plan_dni:
+                # Domyślnie planujemy na jedną zmianę, ale jeśli zadanie jest duże, 
+                # lub kolejne zadania dopychają dzień, limit rośnie do 2 zmian (960 min)
+                plan_dni[d_key] = LIMIT_2_ZMIANY if ile * wyd > LIMIT_1_ZMIANA else LIMIT_1_ZMIANA
             
             wolny = plan_dni[d_key]
             if wolny >= wyd:
@@ -62,14 +67,14 @@ def generuj_plan(kolejka_tuple, data_dzis):
                     ile -= produkcja
                     plan_dni[d_key] -= (produkcja * wyd)
             
-            if ile > 0: # Jeśli towar został, a zmiana 8h pełna -> następny dzień
+            if ile > 0: # Przejście na następny dzień, jeśli ten jest już pełny (2 zmiany)
                 data_kursora += datetime.timedelta(days=1)
-                if data_kursora.weekday() == 6: # Pomiń niedzielę
+                if data_kursora.weekday() == 6: 
                     data_kursora += datetime.timedelta(days=1)
             else:
+                # Zadanie skończone - nie przesuwamy kursora, kolejne zadanie dociąży ten sam dzień
                 break 
                 
-    # Grupowanie pod kafelki
     dni_widok = {}
     for r in raport_produkcji:
         dk = r['Data']
@@ -80,7 +85,7 @@ def generuj_plan(kolejka_tuple, data_dzis):
     return dni_widok
 
 # --- INTERFEJS ---
-st.title("🥛 Planista Produkcji - Harmonogram")
+st.title("🥛 Planista Produkcji - Optymalizacja Zmian")
 
 with st.sidebar:
     st.header("Zarządzanie")
@@ -91,19 +96,12 @@ with st.sidebar:
         st.session_state.kolejka = []
         st.cache_data.clear()
         st.rerun()
-    
-    st.divider()
-    # Lista zamówień do podglądu/usuwania w sidebarze
-    if st.session_state.kolejka:
-        st.subheader("📦 Aktywne zamówienia")
-        for i, z in enumerate(st.session_state.kolejka):
-            st.caption(f"{z['art']} | {z['ile']} pal. | {z['kraj']} | Wysyłka: {z['termin'].strftime('%d.%m')}")
 
 if st.session_state.get('pokaz_form'):
     with st.form("form"):
         c1, c2 = st.columns(2)
         kraj = c1.selectbox("Kraj docelowy:", ["Czechy", "Słowacja"])
-        termin = c2.date_input("Data wysyłki (Termin):", datetime.date.today() + datetime.timedelta(days=2))
+        termin = c2.date_input("Data wysyłki:", datetime.date.today() + datetime.timedelta(days=2))
         st.write("Wpisz ilości palet:")
         cols = st.columns(3)
         nowe = []
@@ -117,12 +115,11 @@ if st.session_state.get('pokaz_form'):
             st.session_state.pokaz_form = False
             st.rerun()
 
-# --- WYŚWIETLANIE HARMONOGRAMU ---
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
     dni = generuj_plan(k_tuple, datetime.date.today())
 
-    st.subheader("🗓️ Plan Produkcji (Zmiany 8h)")
+    st.subheader("🗓️ Harmonogram Produkcji (Dociążanie pełnych zmian)")
     cols = st.columns(5)
     sorted_days = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
     
@@ -132,7 +129,7 @@ if st.session_state.kolejka:
             st.markdown(f"""
                 <div style="border:1px solid #ddd; border-radius:10px; padding:10px; background-color:white; margin-bottom:15px;">
                     <b style="color:#1f77b4; font-size:16px;">{dk} ({d_info['dzien']})</b><br>
-                    <b style="color:green;">Łącznie: {d_info['suma']} pal.</b><hr style="margin:5px 0;">
+                    <b style="color:green;">Suma: {d_info['suma']} pal.</b><hr style="margin:5px 0;">
             """, unsafe_allow_html=True)
             
             for p in d_info["p"]:
@@ -145,4 +142,4 @@ if st.session_state.kolejka:
                 """, unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 else:
-    st.info("Brak aktywnych zamówień. Użyj przycisku w panelu bocznym, aby dodać dane.")
+    st.info("Brak aktywnych zamówień.")
