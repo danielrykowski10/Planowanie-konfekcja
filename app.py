@@ -47,34 +47,29 @@ st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = wczytaj_dane()
 
-# --- NOWA LOGIKA PLANOWANIA: AGRESYWNA KONTYNUACJA ---
+# --- POPRAWIONA LOGIKA PLANOWANIA ---
 @st.cache_data
 def generuj_plan_forward(kolejka_tuple, data_dzis):
     if not kolejka_tuple: 
         return {}, []
 
-    # Kopiujemy i sortujemy bazowo po terminie
     zadania = [dict(z) for z in kolejka_tuple]
-    zadania.sort(key=lambda x: (x['termin'], x['art']))
-    
     plan_dni = {}
     raport = []
-    CZAS_NETTO = 840 
+    MAX_CZAS_DOBA = 840 # 2 zmiany po 7h netto
     ostatni_art = None 
 
     while zadania:
         idx_wybranego = -1
         
-        # 1. SZUKANIE KONTYNUACJI: 
-        # Jeśli robiliśmy ostatnio artykuł X, to teraz musimy wyczyścić WSZYSTKIE zamówienia na X
+        # 1. Kontynuacja asortymentu
         if ostatni_art is not None:
-            # Sortujemy pozostałe zadania tak, by te z 'ostatni_art' i najwcześniejszym terminem były pierwsze
             for i, z in enumerate(zadania):
                 if z['art'] == ostatni_art:
                     idx_wybranego = i
                     break
         
-        # 2. Jeśli nie ma już nic z poprzedniego artykułu, bierzemy najpilniejszy termin
+        # 2. Najpilniejszy termin
         if idx_wybranego == -1:
             zadania.sort(key=lambda x: (x['termin'], x['art']))
             idx_wybranego = 0
@@ -85,41 +80,48 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
         data_kursora = data_dzis
         
         while ile > 0:
-            if data_kursora.weekday() == 6: 
+            if data_kursora.weekday() == 6: # Pomiń niedzielę
                 data_kursora += datetime.timedelta(days=1)
                 continue
                 
             d_key = data_kursora.strftime("%Y-%m-%d")
             if d_key not in plan_dni:
-                plan_dni[d_key] = CZAS_NETTO
+                plan_dni[d_key] = MAX_CZAS_DOBA
             
             wolny_czas = plan_dni[d_key]
             
-            # Jeśli to dzień wysyłki, max 1 zmiana (420 min)
+            # Dzień wysyłki: produkcja musi skończyć się na 1 zmianie (420 min)
             if data_kursora == z['termin']:
-                zajete_dzis = CZAS_NETTO - wolny_czas
-                dostepny_czas = max(0, 420 - zajete_dzis)
+                zajete_juz = MAX_CZAS_DOBA - wolny_czas
+                dostepny_dzis = max(0, 420 - zajete_juz)
             else:
-                dostepny_czas = wolny_czas
+                dostepny_dzis = wolny_czas
                 
-            produkcja = min(dostepny_czas // wyd, ile)
-            nadgodziny = False
+            produkcja = min(dostepny_dzis // wyd, ile)
+            is_nadgodziny = False
             
-            # Sprawdzenie nadgodzin przed wysyłką
+            # WYKRYWANIE NADGODZIN: Jeśli musimy zrobić więcej niż pozwala czas
             jutro = data_kursora + datetime.timedelta(days=1)
             if jutro.weekday() == 6: jutro += datetime.timedelta(days=1)
             
+            # Jeśli jutro wysyłka, a nie zdążymy w normalnym czasie - włącz nadgodziny
             if jutro == z['termin']:
                 d_key_jutro = jutro.strftime("%Y-%m-%d")
-                czas_jutro = plan_dni.get(d_key_jutro, CZAS_NETTO)
-                dostepne_jutro = max(0, 420 - (CZAS_NETTO - czas_jutro))
-                if (ile - produkcja) > (dostepne_jutro // wyd):
-                    produkcja += (ile - produkcja) - (dostepne_jutro // wyd)
-                    nadgodziny = True
+                wolne_jutro = plan_dni.get(d_key_jutro, MAX_CZAS_DOBA)
+                zajete_jutro = MAX_CZAS_DOBA - wolne_jutro
+                dostepne_jutro = max(0, 420 - zajete_jutro)
+                
+                potrzeba_na_jutro = (ile - produkcja) * wyd
+                if potrzeba_na_jutro > (dostepne_jutro):
+                    # Przerzucamy nadmiar na dzisiaj jako nadgodziny
+                    dodatek = (ile - produkcja) - (dostepne_jutro // wyd)
+                    produkcja += dodatek
+                    is_nadgodziny = True
 
-            # Wymuszenie zakończenia w dniu wysyłki
+            # Jeśli dzisiaj jest wysyłka i nadal mamy palety - wymuś produkcję w nadgodzinach
             if data_kursora == z['termin'] and ile > produkcja:
                 produkcja = ile 
+                is_nadgodziny = True
                 
             if produkcja > 0:
                 raport.append({
@@ -131,29 +133,32 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                     "Wysyłka": z["termin"].strftime("%d.%m"),
                     "dt_sort": data_kursora,
                     "termin_sort": z["termin"],
-                    "Nadgodziny": nadgodziny
+                    "Nadgodziny": is_nadgodziny
                 })
                 ile -= produkcja
                 plan_dni[d_key] -= (produkcja * wyd)
-                ostatni_art = z["art"] # Blokujemy maszynę na tym asortymencie
+                ostatni_art = z["art"]
             
             if ile > 0:
                 data_kursora += datetime.timedelta(days=1)
 
-    # Budowanie widoku
+    # Budowanie widoku kafelków
     widok = {}
     raport.sort(key=lambda x: (x['dt_sort'], x['termin_sort'], x['Art']))
     for r in raport:
         dk = r['Data']
         if dk not in widok: 
-            widok[dk] = {"dz": r['Dzień'], "suma": 0, "p": [], "nad": False}
+            widok[dk] = {"dz": r['Dzień'], "suma": 0, "p": [], "nad": False, "czas_zajety": 0}
         widok[dk]["p"].append(r)
         widok[dk]["suma"] += r["Palety"]
-        if r["Nadgodziny"]: widok[dk]["nad"] = True
+        widok[dk]["czas_zajety"] += r["Palety"] * WYDAJNOSC.get(r["Art"], 70)
+        # Jeśli suma minut przekracza 840 LUB flaga Nadgodziny jest True
+        if r["Nadgodziny"] or widok[dk]["czas_zajety"] > MAX_CZAS_DOBA:
+            widok[dk]["nad"] = True
             
     return widok, raport
 
-# --- INTERFEJS BEZ ZMIAN ---
+# --- INTERFEJS ---
 with st.sidebar:
     st.header("⚙️ Zarządzanie")
     if st.button("➕ DODAJ ZAMÓWIENIE", type="primary", use_container_width=True): 
@@ -165,39 +170,23 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-    if st.session_state.kolejka:
-        st.divider()
-        daty = sorted(list(set([z['termin'] for z in st.session_state.kolejka])))
-        for d in daty:
-            with st.expander(f"📅 Wysyłka: {d.strftime('%d.%m')}"):
-                for i, z in enumerate(st.session_state.kolejka):
-                    if z['termin'] == d:
-                        c1, c2 = st.columns([3, 1])
-                        c1.write(f"Art {z['art']} ({z['kraj']})")
-                        if c2.button("❌", key=f"del_{i}"):
-                            st.session_state.kolejka.pop(i)
-                            zapisz_dane(st.session_state.kolejka)
-                            st.rerun()
+st.title("Konfekcja SM - Harmonogram Produkcji")
 
 if st.session_state.get('pokaz_f'):
     with st.form("add_form"):
         kraj = st.selectbox("Kraj", ["Czechy", "Słowacja"])
-        term = st.date_input("Termin", datetime.date.today() + datetime.timedelta(days=3))
+        term = st.date_input("Termin", datetime.date.today() + datetime.timedelta(days=2))
         cols = st.columns(3)
+        temp_dodaj = []
         for i, art_id in enumerate(WYDAJNOSC.keys()):
             with cols[i % 3]:
                 v = st.number_input(f"Art {art_id}", min_value=0, step=1)
-                if v > 0: 
-                    if 'temp_q' not in st.session_state: st.session_state.temp_q = []
-                    st.session_state.temp_q.append({"art": art_id, "ile": v, "termin": term, "kraj": kraj})
+                if v > 0: temp_dodaj.append({"art": art_id, "ile": v, "termin": term, "kraj": kraj})
         if st.form_submit_button("Zatwierdź"):
-            st.session_state.kolejka.extend(st.session_state.temp_q)
-            st.session_state.temp_q = []
+            st.session_state.kolejka.extend(temp_dodaj)
             zapisz_dane(st.session_state.kolejka)
             st.session_state.pokaz_f = False
             st.rerun()
-
-st.title("Konfekcja SM - Harmonogram")
 
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
@@ -211,9 +200,10 @@ if st.session_state.kolejka:
             inf = dni[dk]
             border = "#ffb300" if inf["nad"] else "#ddd"
             bg = "#fff8e1" if inf["nad"] else "white"
+            txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:13px;'>⚠️ WYDŁUŻONA ZMIANA</span>" if inf["nad"] else ""
             
-            st.markdown(f"""<div style="border:2px solid {border}; border-radius:10px; padding:10px; background-color:{bg}; margin-bottom:10px;">
-                <b style="color:#1f77b4;">{dk} ({inf['dz']})</b><br>
+            st.markdown(f"""<div style="border:2px solid {border}; border-radius:10px; padding:10px; background-color:{bg}; min-height:150px; margin-bottom:10px;">
+                <b style="color:#1f77b4;">{dk} ({inf['dz']})</b>{txt_nad}<br>
                 <b style="color:green;">Suma: {inf['suma']} pal.</b><hr style="margin:5px 0;">""", unsafe_allow_html=True)
             
             for p in inf["p"]:
