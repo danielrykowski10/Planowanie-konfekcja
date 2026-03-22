@@ -31,6 +31,7 @@ def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
         return {}, [], pd.DataFrame()
     
     zadania = [dict(z) for z in kolejka_tuple]
+    # Sortujemy od najpóźniejszych terminów
     zadania = sorted(zadania, key=lambda x: x['termin'], reverse=True)
     
     limit_minut = 840
@@ -102,6 +103,7 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ WYCZYŚĆ PLAN", use_container_width=True):
         st.session_state.kolejka = []
+        st.cache_data.clear()
         st.rerun()
 
 if st.session_state.get('pokaz_okno'):
@@ -110,7 +112,7 @@ if st.session_state.get('pokaz_okno'):
         pobrane = []
         for i, art_id in enumerate(WYDAJNOSC.keys()):
             with c[i % 2]:
-                val = st.number_input(f"Art {art_id}", min_value=0, step=1)
+                val = st.number_input(f"Art {art_id}", min_value=0, step=1, key=f"v_{art_id}")
                 if val > 0: pobrane.append({"art": art_id, "ile": val})
         dt_wys = st.date_input("Wysyłka:", datetime.date.today() + datetime.timedelta(days=3))
         if st.button("ZAPISZ"):
@@ -128,7 +130,7 @@ if st.session_state.kolejka:
     df_full = pd.DataFrame(raport_surowy)
 
     # 1. HARMONOGRAM PRODUKCJI
-    st.subheader("🗓️ Harmonogram Produkcji")
+    st.subheader("🗓️ Harmonogram Produkcji (Kiedy robić)")
     siatka = st.columns(5)
     for i, d_key in enumerate(sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
         with siatka[i % 5]:
@@ -142,27 +144,24 @@ if st.session_state.kolejka:
                 st.write(f"**{p['Artykuł']}**: {p['Palety']} pal.")
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # 2. PODSUMOWANIE WYSYŁEK (DZIENNE)
+    # 2. PODSUMOWANIE WYSYŁEK (SZCZEGÓŁOWE)
     st.divider()
-    st.subheader("🚚 Podsumowanie Wysyłek (Dziennie)")
-    df_wysylki = df_full.groupby("Data Wysyłki")["Palety"].sum().reset_index()
-    st.table(df_wysylki)
+    st.subheader("🚚 Podsumowanie Wysyłek (Rozbicie na asortyment)")
+    
+    # Grupowanie po dacie wysyłki i artykule
+    df_wysylki_szczegol = df_full.groupby(["Data Wysyłki", "Artykuł"])["Palety"].sum().reset_index()
+    
+    # Dodanie wierszy z sumą dzienną dla lepszej czytelności
+    for data in df_wysylki_szczegol["Data Wysyłki"].unique():
+        suma_dnia = df_wysylki_szczegol[df_wysylki_szczegol["Data Wysyłki"] == data]["Palety"].sum()
+        st.write(f"📅 **Wysyłka: {data}** — Łącznie: **{suma_dnia} palet**")
+        st.dataframe(df_wysylki_szczegol[df_wysylki_szczegol["Data Wysyłki"] == data][["Artykuł", "Palety"]], hide_index=True, use_container_width=True)
 
-    # 3. PODSUMOWANIE MIESIĘCZNE (ASORTYMENT)
+    # 3. PODSUMOWANIE MIESIĘCZNE
     st.divider()
     st.subheader("📊 Produkcja Miesięczna (Suma wg artykułu)")
-    
-    # Dodajemy czytelną nazwę miesiąca
     df_full["Nazwa Miesiąca"] = df_full["Miesiac"].map(MIESIACE_PL)
-    
-    # Tworzymy tabelę przestawną: Artykuł vs Miesiąc
-    df_miesiac = df_full.pivot_table(
-        index="Artykuł",
-        columns="Nazwa Miesiąca",
-        values="Palety",
-        aggfunc="sum",
-        fill_value=0
-    )
+    df_miesiac = df_full.pivot_table(index="Artykuł", columns="Nazwa Miesiąca", values="Palety", aggfunc="sum", fill_value=0)
     st.dataframe(df_miesiac, use_container_width=True)
 
 else:
