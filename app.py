@@ -17,25 +17,36 @@ WYDAJNOSC = {
 
 st.set_page_config(page_title="Planista Produkcji PRO", layout="wide")
 
+# Inicjalizacja kolejki
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
 # --- SZYBKA LOGIKA OBLICZENIOWA ---
 @st.cache_data
-def generuj_harmonogram(kolejka_tuple):
+def generuj_harmonogram(kolejka_tuple, data_dzisiejsza):
     if not kolejka_tuple:
         return {}, []
     
     zadania = [dict(z) for z in kolejka_tuple]
+    # Sortowanie: najpierw po dacie startu, potem po terminie (deadline)
     zadania = sorted(zadania, key=lambda x: (x['start'], x['termin']))
     
     dni_planu = {}
-    LIMIT_MINUT = 840  # 14h
+    LIMIT_MINUT = 840  # 14h pracy
     aktualna_data = min(z["start"] for z in zadania)
+    
+    # Jeśli najwcześniejsze zadanie jest z przeszłości, zacznij planowanie od dzisiaj
+    if aktualna_data < data_dzisiejsza:
+        aktualna_data = data_dzisiejsza
+        
     wolny_czas = LIMIT_MINUT
     raport = []
 
     while zadania:
+        # Pomiń generowanie dni wstecznych w raporcie
+        if aktualna_data < data_dzisiejsza:
+            aktualna_data = data_dzisiejsza
+
         d_key = aktualna_data.strftime("%Y-%m-%d")
         if d_key not in dni_planu:
             dzien_en = aktualna_data.strftime("%A")
@@ -46,6 +57,7 @@ def generuj_harmonogram(kolejka_tuple):
                 "suma_palet": 0
             }
         
+        # Filtrujemy zadania dostępne na dany dzień
         dostepne = [z for z in zadania if z["start"] <= aktualna_data]
         
         if not dostepne:
@@ -65,7 +77,7 @@ def generuj_harmonogram(kolejka_tuple):
                 "Artykuł": z["art"],
                 "Palety": int(ile_dzis),
                 "Termin": z["termin"].strftime("%d.%m"),
-                "Opóźnienie": "TAK" if spoznienie else "NIE"
+                "Status": "⚠️ OPÓŹNIENIE" if spoznienie else "OK"
             }
             dni_planu[d_key]["p"].append(wpis)
             dni_planu[d_key]["suma_palet"] += int(ile_dzis)
@@ -80,7 +92,7 @@ def generuj_harmonogram(kolejka_tuple):
             aktualna_data += datetime.timedelta(days=1)
             wolny_czas = LIMIT_MINUT
             
-        if len(dni_planu) > 120: break
+        if len(dni_planu) > 90: break
         
     return dni_planu, raport
 
@@ -98,39 +110,57 @@ def okno_dodawania():
     
     st.divider()
     c1, c2 = st.columns(2)
-    ds = c1.date_input("Start produkcji:", datetime.date.today())
-    dt = c2.date_input("Termin dostawy:", datetime.date.today() + datetime.timedelta(days=2))
+    ds = c1.date_input("Kiedy to zacząć?", datetime.date.today())
+    dt = c2.date_input("Termin (Deadline):", datetime.date.today() + datetime.timedelta(days=2))
     
     if st.button("ZATWIERDŹ", use_container_width=True, type="primary"):
         if nowe:
-            # Poprawione wcięcie - teraz pętla jest wewnątrz bloku 'if'
             for item in nowe:
                 st.session_state.kolejka.append({
+                    "id": datetime.datetime.now().timestamp(), # Unikalne ID do usuwania
                     "art": item["art"], 
                     "ile": item["ile"], 
                     "start": ds, 
                     "termin": dt
                 })
             st.rerun()
-        else:
-            st.error("Musisz wpisać przynajmniej jedną ilość!")
 
 # --- INTERFEJS GŁÓWNY ---
-st.title("🥛 Planista Produkcji v6")
+st.title("🥛 Planista Produkcji - Mleczarnia")
 
-col1, col2 = st.columns([1, 4])
+# Sidebar z listą aktywnych zamówień w kolejce
+with st.sidebar:
+    st.header("📦 Kolejka zamówień")
+    if not st.session_state.kolejka:
+        st.write("Brak zamówień.")
+    else:
+        for i, item in enumerate(st.session_state.kolejka):
+            col_txt, col_del = st.columns([4, 1])
+            col_txt.write(f"**{item['art']}**: {item['ile']} pal. (od {item['start'].strftime('%d.%m')})")
+            if col_del.button("❌", key=f"del_{i}"):
+                st.session_state.kolejka.pop(i)
+                st.rerun()
+    
+    st.divider()
+    if st.button("🗑️ WYCZYŚĆ WSZYSTKO", use_container_width=True):
+        st.session_state.kolejka = []
+        st.cache_data.clear()
+        st.rerun()
+
+col1, _ = st.columns([1, 4])
 if col1.button("➕ NOWE ZAMÓWIENIE", use_container_width=True, type="primary"):
     okno_dodawania()
-if col2.button("🗑️ WYCZYŚĆ WSZYSTKO"):
-    st.session_state.kolejka = []
-    st.cache_data.clear()
-    st.rerun()
 
 if st.session_state.kolejka:
+    # Przygotowanie danych do cache
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
-    dni, raport_dane = generuj_harmonogram(k_tuple)
+    dzis = datetime.date.today()
     
-    st.subheader("🗓️ Widok Harmonogramu")
+    dni, raport_dane = generuj_harmonogram(k_tuple, dzis)
+    
+    st.subheader(f"🗓️ Harmonogram od dnia dzisiejszego ({dzis.strftime('%d.%m')})")
+    
+    # Kafelki
     siatka = st.columns(5)
     for i, dk in enumerate(sorted(dni.keys())):
         with siatka[i % 5]:
@@ -138,7 +168,7 @@ if st.session_state.kolejka:
             st.markdown(f"""
                 <div style="border:1px solid #ddd; border-radius:10px; padding:10px; background-color:#fff;">
                     <b style="font-size:16px;">{d_info['data'].strftime('%d.%m')}</b> ({d_info['dzien_pl']})<br>
-                    <span style="color:blue; font-weight:bold;">Łącznie: {d_info['suma_palet']} pal.</span>
+                    <span style="color:blue; font-weight:bold;">Suma: {d_info['suma_palet']} pal.</span>
                     <hr style="margin:5px 0;">
             """, unsafe_allow_html=True)
             for p in d_info["p"]:
@@ -146,11 +176,11 @@ if st.session_state.kolejka:
             st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
-    st.subheader("🖨️ Raport końcowy")
+    st.subheader("🖨️ Raport do druku")
     df = pd.DataFrame(raport_dane)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.table(df)
     
     csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("📥 Pobierz raport CSV", data=csv, file_name="harmonogram.csv", mime="text/csv")
+    st.download_button("📥 Pobierz CSV", data=csv, file_name=f"plan_{dzis}.csv", mime="text/csv")
 else:
-    st.info("Brak zamówień. Kliknij przycisk powyżej, aby dodać dane.")
+    st.info("Dodaj zamówienie, aby zobaczyć harmonogram.")
