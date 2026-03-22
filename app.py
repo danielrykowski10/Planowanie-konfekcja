@@ -1,8 +1,9 @@
 import streamlit as st
 import datetime
 import pandas as pd
+import os
 
-# 1. Dane stałe
+# 1. Konfiguracja stałych
 DNI_PL = {
     "Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa",
     "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
@@ -14,173 +15,162 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="SM Mazowsze - Pro", layout="wide")
+# --- KONFIGURACJA STRONY ---
+st.set_page_config(page_title="Konfekcja SM - Planista JIT", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- LOGIKA PLANOWANIA JIT ---
+# --- ZAAWANSOWANA LOGIKA PLANOWANIA ---
 @st.cache_data
-def generuj_plan_jit(kolejka_tuple, data_dzis):
+def generuj_plan_zoptymalizowany(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
 
     zadania = [dict(z) for z in kolejka_tuple]
-    # Planujemy od najpóźniejszych wysyłek wstecz
-    zadania = sorted(zadania, key=lambda x: x['termin'], reverse=True)
+    zadania = sorted(zadania, key=lambda x: x['termin'])
     
     plan_dni = {}
     raport = []
-    CZAS_NETTO = 840 # 2 zmiany
+    data_kursora = data_dzis
     
-    for z in zadania:
+    CZAS_NETTO = 420 
+    MAX_2_ZMIANY = 840 
+    
+    ostatni_artykul = None 
+
+    while zadania:
+        d_key = data_kursora.strftime("%Y-%m-%d")
+        if d_key not in plan_dni:
+            suma_minut_pozostalo = sum(z['ile'] * WYDAJNOSC.get(z['art'], 70) for z in zadania)
+            plan_dni[d_key] = MAX_2_ZMIANY if suma_minut_pozostalo > CZAS_NETTO else CZAS_NETTO
+
+        najblizsza_data = zadania[0]['termin']
+        idx_zadania = 0
+        
+        for i, z in enumerate(zadania):
+            if z['termin'] == najblizsza_data and z['art'] == ostatni_artykul:
+                idx_zadania = i
+                break
+        
+        if idx_zadania == 0 and zadania[0]['art'] != ostatni_artykul and ostatni_artykul is not None:
+             for i, z in enumerate(zadania):
+                if z['art'] == ostatni_artykul:
+                    idx_zadania = i
+                    break
+
+        z = zadania.pop(idx_zadania)
         ile = z['ile']
         wyd = WYDAJNOSC.get(z["art"], 70)
-        data_planu = z['termin'] - datetime.timedelta(days=1)
         
         while ile > 0:
-            if data_planu < data_dzis: data_planu = data_dzis
+            if data_kursora > z['termin']: data_kursora = data_dzis
             
-            d_key = data_planu.strftime("%Y-%m-%d")
-            if d_key not in plan_dni: plan_dni[d_key] = CZAS_NETTO
+            wolny = plan_dni[data_kursora.strftime("%Y-%m-%d")]
             
-            wolny_czas = plan_dni[d_key]
-            if wolny_czas >= wyd:
-                produkcja = min(wolny_czas // wyd, ile)
+            if wolny >= wyd:
+                produkcja = min(wolny // wyd, ile)
                 if produkcja > 0:
                     raport.append({
-                        "Data": data_planu.strftime("%d.%m"),
+                        "Data": data_kursora.strftime("%d.%m"),
+                        "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
                         "Art": z["art"],
                         "Palety": int(produkcja),
                         "Kraj": z.get("kraj", "Czechy"),
-                        "Wysyłka": z["termin"].strftime("%d.%m"),
-                        "dt_sort": data_planu,
-                        "oryg_termin": z['termin']
+                        "Wysyłka": z["termin"].strftime("%d.%m")
                     })
                     ile -= produkcja
-                    plan_dni[d_key] -= (produkcja * wyd)
-            
-            if ile > 0:
-                if data_planu == data_dzis: break
-                data_planu -= datetime.timedelta(days=1)
-                if data_planu.weekday() == 6: data_planu -= datetime.timedelta(days=1)
-            else:
-                break
+                    plan_dni[data_kursora.strftime("%Y-%m-%d")] -= (produkcja * wyd)
+                    ostatni_artykul = z["art"]
 
-    widok = {}
-    raport_posortowany = sorted(raport, key=lambda x: x['dt_sort'])
+            if ile > 0: 
+                data_kursora += datetime.timedelta(days=1)
+                if data_kursora.weekday() == 6: data_kursora += datetime.timedelta(days=1)
+                d_key_next = data_kursora.strftime("%Y-%m-%d")
+                if d_key_next not in plan_dni:
+                    plan_dni[d_key_next] = MAX_2_ZMIANY if (ile * wyd + sum(za['ile']*WYDAJNOSC.get(za['art'],70) for za in zadania)) > CZAS_NETTO else CZAS_NETTO
+            else:
+                break 
+
+    wynik = {}
+    raport_posortowany = sorted(raport, key=lambda x: (x['Art'])) # Grupowanie artykułów w widoku
     for r in raport_posortowany:
         dk = r['Data']
-        if dk not in widok: widok[dk] = {"dz": DNI_PL.get(r['dt_sort'].strftime("%A")), "suma": 0, "p": []}
-        widok[dk]["p"].append(r)
-        widok[dk]["suma"] += r["Palety"]
-    return widok, raport
+        if dk not in wynik: wynik[dk] = {"dz": r['Dzień'], "suma": 0, "p": []}
+        wynik[dk]["p"].append(r)
+        wynik[dk]["suma"] += r["Palety"]
+    return wynik
 
-# --- PANEL BOCZNY ---
+# --- INTERFEJS UŻYTKOWNIKA ---
 with st.sidebar:
+    st.markdown("""
+        <style>
+            .sidebar-title {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-size: 24px;
+                font-weight: bold;
+                color: #1f77b4;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="sidebar-title">Konfekcja SM</div>', unsafe_allow_html=True)
     st.header("⚙️ Zarządzanie")
+    
     if st.button("➕ DODAJ NOWE ZAMÓWIENIE", type="primary", use_container_width=True): 
         st.session_state.pokaz_f = True
-    
     if st.button("🗑️ WYCZYŚĆ WSZYSTKO", use_container_width=True):
         st.session_state.kolejka = []
         st.cache_data.clear()
         st.rerun()
 
-    if st.session_state.kolejka:
-        st.divider()
-        st.subheader("✏️ Edycja zamówień")
-        
-        # Grupowanie unikalnych dat wysyłki
-        unikalne_daty = sorted(list(set([z['termin'] for z in st.session_state.kolejka])))
-        
-        for d in unikalne_daty:
-            with st.expander(f"📅 Wysyłka: {d.strftime('%d.%m')}"):
-                for kraj in ["Czechy", "Słowacja"]:
-                    st.markdown(f"**{kraj}**")
-                    # Filtrowanie artykułów dla danej daty i kraju
-                    for i, z in enumerate(st.session_state.kolejka):
-                        if z['termin'] == d and z['kraj'] == kraj:
-                            c1, c2 = st.columns([3, 1])
-                            nowa_il = c1.number_input(f"Art {z['art']}", value=int(z['ile']), key=f"ed_{i}")
-                            if c2.button("❌", key=f"del_{i}"):
-                                st.session_state.kolejka.pop(i)
-                                st.rerun()
-                            if nowa_il != z['ile']:
-                                st.session_state.kolejka[i]['ile'] = nowa_il
-                                st.rerun()
-
-# --- FORMULARZ DODAWANIA ---
 if st.session_state.get('pokaz_f'):
-    with st.form("quick_add"):
+    with st.form("f_add"):
         st.subheader("Nowe zamówienie")
         c1, c2 = st.columns(2)
-        kraj_n = c1.selectbox("Kierunek:", ["Czechy", "Słowacja"])
-        term_n = c2.date_input("Termin wysyłki:", datetime.date.today() + datetime.timedelta(days=3))
-        cols = st.columns(3)
-        nowe_partie = []
+        kraj_nowy = c1.selectbox("Kierunek:", ["Czechy", "Słowacja"])
+        dt_wys = c2.date_input("Wysyłka:", datetime.date.today() + datetime.timedelta(days=3))
+        
+        c = st.columns(2)
+        pobrane = []
         for i, art_id in enumerate(WYDAJNOSC.keys()):
-            with cols[i % 3]:
-                v = st.number_input(f"Art {art_id}", min_value=0, step=1, key=f"add_{art_id}")
-                if v > 0: nowe_partie.append({"art": art_id, "ile": v, "termin": term_n, "kraj": kraj_n})
-        if st.form_submit_button("ZATWIERDŹ"):
-            st.session_state.kolejka.extend(nowe_partie)
+            with c[i % 2]:
+                val = st.number_input(f"Art {art_id}", min_value=0, key=f"n_{art_id}")
+                if val > 0: pobrane.append({"art": art_id, "ile": val})
+        
+        if st.button("ZATWIERDŹ"):
+            for p in pobrane:
+                st.session_state.kolejka.append({"art": p["art"], "ile": p["ile"], "termin": dt_wys, "kraj": kraj_nowy})
             st.session_state.pokaz_f = False
             st.rerun()
 
-# --- WIDOK GŁÓWNY ---
-st.title("🥛 Planista Produkcji JIT")
+st.title("Konfekcja SM - Planista Produkcji JIT")
 
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
-    dni, raport_surowy = generuj_plan_jit(k_tuple, datetime.date.today())
+    dni = generuj_plan_zoptymalizowany(k_tuple, datetime.date.today())
 
-    # 1. HARMONOGRAM
+    st.subheader("🗓️ Realny Harmonogram Produkcji")
     grid = st.columns(5)
     sorted_keys = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
-    for i, dk in enumerate(sorted_keys):
+    
+    for i, data_klucz in enumerate(sorted_keys):
         with grid[i % 5]:
-            inf = dni[dk]
-            st.markdown(f"""<div style="border:1px solid #ddd; border-radius:10px; padding:10px; background-color:white; margin-bottom:10px;">
-                <b style="color:#1f77b4;">{dk} ({inf['dz']})</b><br>
-                <b style="color:green;">Łącznie: {inf['suma']} pal.</b><hr style="margin:5px 0;">""", unsafe_allow_html=True)
+            inf = dni[data_klucz]
+            st.markdown(f"""
+            <div style="border:1px solid #ddd; border-radius:10px; padding:10px; background-color:white; margin-bottom:10px; min-height:150px;">
+                <b style="color:#1f77b4; font-size:15px;">{data_klucz} ({inf['dz']})</b><br>
+                <b style="color:green;">Łącznie: {inf['suma']} pal.</b><hr style="margin:5px 0;">
+            """, unsafe_allow_html=True)
             for p in inf["p"]:
-                bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
-                st.markdown(f"""<div style="background-color:{bg}; padding:5px; border-radius:5px; margin-bottom:4px; border:1px solid #eee; font-size:12px;">
-                    <b>{p['Art']}</b>: {p['Palety']} pal.<br><small>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</small>
-                </div>""", unsafe_allow_html=True)
+                bg_col = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
+                st.markdown(f"""
+                <div style="background-color:{bg_col}; padding:5px; border-radius:5px; margin-bottom:4px; border:1px solid #eee; font-size:12px;">
+                    <b>{p['Art']}</b>: {p['Palety']} pal.<br>
+                    <small>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</small>
+                </div>
+                """, unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
-
-    # 2. ZESTAWIENIE KONTROLNE (NA DOLE)
-    st.divider()
-    st.subheader("🔍 Kontrola zgodności zamówień")
-    
-    # Przygotowanie danych do tabeli porównawczej
-    df_zamowione = pd.DataFrame(st.session_state.kolejka)
-    df_zamowione['Wysyłka'] = df_zamowione['termin'].apply(lambda x: x.strftime("%d.%m"))
-    suma_zamowiona = df_zamowione.groupby(['Wysyłka', 'kraj', 'art'])['ile'].sum().reset_index()
-    
-    df_rozpisane = pd.DataFrame(raport_surowy)
-    suma_rozpisana = df_rozpisane.groupby(['Wysyłka', 'Kraj', 'Art'])['Palety'].sum().reset_index()
-    
-    # Łączenie tabel
-    porownanie = pd.merge(
-        suma_zamowiona, 
-        suma_rozpisana, 
-        left_on=['Wysyłka', 'kraj', 'art'], 
-        right_on=['Wysyłka', 'Kraj', 'Art'], 
-        how='left'
-    ).fillna(0)
-    
-    porownanie = porownanie[['Wysyłka', 'kraj', 'art', 'ile', 'Palety']]
-    porownanie.columns = ['Data Wysyłki', 'Kraj', 'Artykuł', 'Zamówiono (pal)', 'Rozpisano w planie (pal)']
-    
-    # Dodanie statusu
-    def sprawdz_zgodnosc(row):
-        return "✅ OK" if row['Zamówiono (pal)'] == row['Rozpisano w planie (pal)'] else "❌ BŁĄD"
-    
-    porownanie['Status'] = porownanie.apply(sprawdz_zgodnosc, axis=1)
-    
-    st.table(porownanie)
-
 else:
-    st.info("Brak zamówień. Dodaj je w panelu bocznym.")
+    st.info("Brak zamówień. Dodaj dane w panelu bocznym.")
