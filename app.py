@@ -8,55 +8,79 @@ wydajnosc = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista Mleczarnia", page_icon="🥛")
-st.title("🥛 Planista Konfekcji Sera")
+st.set_page_config(page_title="Planista Mleczarnia", page_icon="🥛", layout="wide")
+st.title("🥛 Planista Wielu Zamówień")
 
-# Wybór artykułu
-artykul = st.selectbox("Wybierz artykuł (Indeks):", list(wydajnosc.keys()))
-ilosc_palet = st.number_input("Ile palet do zrobienia?", min_value=0.5, step=0.5, value=1.0)
+st.sidebar.header("Ustawienia zmiany")
+data_startu = st.sidebar.date_input("Dzień rozpoczęcia:", datetime.datetime.now())
+czas_zmiany = 420  # 7h netto
 
-# Ustalenie startu (teraz)
-teraz = datetime.datetime.now()
-data_startu = st.date_input("Dzień rozpoczęcia:", teraz)
-godzina = teraz.hour
+st.write("### 📝 Wprowadź ilość palet dla poszczególnych indeksów:")
 
-if st.button("Generuj Plan"):
-    czas_jednej = wydajnosc[artykul]
-    pozostalo_minut = ilosc_palet * czas_jednej
-    czas_zmiany = 420  # 7h netto
-    
-    st.write(f"### 📋 Wynik dla: {artykul}")
-    st.write(f"Łączny czas: **{int(pozostalo_minut)} min**")
-    
-    aktualna_data = data_startu
-    # Jeśli planujesz dzisiaj po 22:00, zacznij od jutra rana
-    if godzina >= 22:
-        aktualna_data += datetime.timedelta(days=1)
-        start_od_zmiany = 1
-    elif godzina >= 14:
-        start_od_zmiany = 2
+# Tworzymy formularz do wpisywania wielu ilości na raz
+zamowienie = {}
+cols = st.columns(3) # Rozbijamy na 3 kolumny, żeby było czytelnie
+for i, index in enumerate(wydajnosc.keys()):
+    with cols[i % 3]:
+        ile = st.number_input(f"Indeks {index}", min_value=0.0, step=1.0, value=0.0)
+        if ile > 0:
+            zamowienie[index] = ile
+
+if st.button("Generuj Harmonogram Produkcji"):
+    if not zamowienie:
+        st.warning("Wpisz chociaż jedną paletę!")
     else:
-        start_od_zmiany = 1
+        # Obliczamy łączną kolejkę zadań (zadanie = (indeks, minuty))
+        kolejka_zadan = []
+        calkowity_czas_wszystkich = 0
+        for idx, ilosc in zamowienie.items():
+            czas_za_indeks = ilosc * wydajnosc[idx]
+            kolejka_zadan.append({"idx": idx, "ile": ilosc, "pozostalo_min": czas_za_indeks})
+            calkowity_czas_wszystkich += czas_za_indeks
 
-    dzien = 0
-    while pozostalo_minut > 0:
-        data_str = (aktualna_data + datetime.timedelta(days=dzien)).strftime("%d.%m (%A)")
-        st.info(f"📅 **{data_str}**")
-        
-        # Zmiana I
-        if start_od_zmiany <= 1:
-            robota = min(pozostalo_minut, czas_zmiany)
-            p_z1 = round(robota / czas_jednej, 1)
-            st.success(f"I zmiana (6-14): **{p_z1} palet**")
-            pozostalo_minut -= robota
-        
-        if pozostalo_minut <= 0: break
+        st.write(f"--- \nŁączny czas produkcji: **{int(calkowity_czas_wszystkich)} min** (ok. {round(calkowity_czas_wszystkich/60, 1)}h)")
+
+        teraz = datetime.datetime.now()
+        aktualna_data = data_startu
+        # Logika startu zmiany
+        if teraz.hour >= 22:
+            aktualna_data += datetime.timedelta(days=1)
+            start_od_zmiany = 1
+        elif teraz.hour >= 14:
+            start_od_zmiany = 2
+        else:
+            start_od_zmiany = 1
+
+        dzien_offset = 0
+        zadanie_idx = 0 # Który produkt z listy teraz robimy
+
+        while zadanie_idx < len(kolejka_zadan):
+            data_str = (aktualna_data + datetime.timedelta(days=dzien_offset)).strftime("%d.%m (%A)")
+            st.info(f"📅 **{data_str}**")
             
-        # Zmiana II
-        robota = min(pozostalo_minut, czas_zmiany)
-        p_z2 = round(robota / czas_jednej, 1)
-        st.success(f"II zmiana (14-22): **{p_z2} palet**")
-        pozostalo_minut -= robota
-        
-        start_od_zmiany = 1 # Kolejne dni zaczynamy od I zmiany
-        dzien += 1
+            # Przechodzimy przez zmiany (I i II)
+            for nr_zmiany in [1, 2]:
+                if dzien_offset == 0 and nr_zmiany < start_od_zmiany:
+                    continue
+                
+                wolny_czas_na_zmianie = czas_zmiany
+                st.success(f"**Zmiana {'I' if nr_zmiany==1 else 'II'} ({'6-14' if nr_zmiany==1 else '14-22'})**")
+                
+                while wolny_czas_na_zmianie > 0 and zadanie_idx < len(kolejka_zadan):
+                    zadanie = kolejka_zadan[zadanie_idx]
+                    czas_do_pobrania = min(zadanie["pozostalo_min"], wolny_czas_na_zmianie)
+                    
+                    ile_palet_weszlo = round(czas_do_pobrania / wydajnosc[zadanie["idx"]], 1)
+                    if ile_palet_weszlo > 0:
+                        st.write(f"➡️ Indeks **{zadanie['idx']}**: {ile_palet_weszlo} palet")
+                    
+                    zadanie["pozostalo_min"] -= czas_do_pobrania
+                    wolny_czas_na_zmianie -= czas_do_pobrania
+                    
+                    if zadanie["pozostalo_min"] <= 0:
+                        zadanie_idx += 1
+                
+                if zadanie_idx >= len(kolejka_zadan):
+                    break
+            
+            dzien_offset += 1
