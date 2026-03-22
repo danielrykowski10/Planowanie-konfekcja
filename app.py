@@ -19,7 +19,7 @@ st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- PLANOWANIE W PRZÓD (Z WYMUSZANIEM NADGODZIN ZAMIAST OPÓŹNIEŃ) ---
+# --- PLANOWANIE W PRZÓD (NADGODZINY TYLKO PRZED DNIEM WYSYŁKI) ---
 @st.cache_data
 def generuj_plan_forward(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
@@ -28,21 +28,20 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
     
     plan_dni = {}
     raport = []
-    CZAS_NETTO = 840 # 2 zmiany po 7h netto pracy (14h łącznie)
+    CZAS_NETTO = 840 # 2 zmiany (14h)
     ostatni_art = None
     
     while zadania:
-        # 1. Zawsze bierzemy najpierw zamówienie z najbliższą wysyłką
+        # 1. Priorytet: Najbliższa wysyłka
         najblizsza_wysylka = min(z['termin'] for z in zadania)
         
-        # 2. Szukamy kontynuacji artykułu
+        # 2. Priorytet: Kontynuacja artykułu
         idx_wybranego = -1
         for i, z in enumerate(zadania):
             if z['termin'] == najblizsza_wysylka and z['art'] == ostatni_art:
                 idx_wybranego = i
                 break
         
-        # 3. Brak kontynuacji -> pierwsze z brzegu dla najpilniejszej daty
         if idx_wybranego == -1:
             for i, z in enumerate(zadania):
                 if z['termin'] == najblizsza_wysylka:
@@ -66,7 +65,7 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                 
             wolny_czas = plan_dni[d_key]
             
-            # W dniu wysyłki mamy tylko 1 zmianę (420 min) do dyspozycji
+            # W dniu wysyłki twardy limit 1 zmiany (420 min)
             if data_kursora == z['termin']:
                 dostepny_czas = max(0, wolny_czas - 420)
             else:
@@ -75,16 +74,23 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
             produkcja = min(dostepny_czas // wyd, ile)
             nadgodziny = False
             
-            # --- KLUCZOWA ZMIANA: WYMUSZANIE NADGODZIN ---
-            # Sprawdzamy, czy jutrzejszy dzień roboczy nie przekracza daty wysyłki
+            # --- ZABEZPIECZENIE PRZED NADGODZINAMI W DNIU WYSYŁKI ---
             jutro = data_kursora + datetime.timedelta(days=1)
             if jutro.weekday() == 6:
                 jutro += datetime.timedelta(days=1)
                 
-            # Jeśli jutro jest "za późno", a towar nam został, dopychamy go do dzisiaj!
-            if jutro > z['termin'] and ile > produkcja:
-                produkcja = ile
+            # Jeśli jutro jest dniem wysyłki (lub po nim), a my nadal nie skończyliśmy i to nie jest dzień wysyłki
+            if jutro >= z['termin'] and ile > produkcja and data_kursora < z['termin']:
+                produkcja = ile # Wymuszamy zrobienie całości "dzisiaj"
                 nadgodziny = True
+
+            # Jeśli jesteśmy w dniu wysyłki i nadal brakuje czasu, to jest błąd krytyczny układu 
+            # (za dużo zamówień naraz wpisanych na dziś/jutro). 
+            # Wtedy wymusi produkcję bez nadgodzin, ignorując limit, żeby pokazać opóźnienie w innej formie.
+            if data_kursora == z['termin'] and ile > produkcja:
+                produkcja = ile # "Dopycha" do dnia wysyłki
+                # Zostawiamy nadgodziny=False, ale oznacza to przekroczenie 420 min.
+                # W widoku można to dodatkowo ostylować jako czerwony alarm, ale ustaliliśmy nadgodziny tylko przed wysyłką.
 
             if produkcja > 0:
                 raport.append({
@@ -188,13 +194,21 @@ if st.session_state.kolejka:
                 text_col = "#000"
                 alert = ""
                 
-                # Zamiast błędu, wyświetlamy polecenie wydłużenia zmiany
+                # Oznaczenie nadgodzin tylko gdy są ustawione (czyli przed dniem wysyłki)
                 if p.get('Nadgodziny'):
                     bg = "#fff3e0" 
                     border_col = "#ffcc80"
                     text_col = "#e65100"
-                    alert = "<br><span style='color:#e65100; font-weight:bold; font-size:10px;'>⚠️ WYDŁUŻONA ZMIANA (np. 9h)</span>"
+                    alert = "<br><span style='color:#e65100; font-weight:bold; font-size:10px;'>⚠️ WYDŁUŻONA ZMIANA</span>"
                 
+                # Dodatkowe zabezpieczenie: jeśli system wypchnie za dużo na dzień wysyłki
+                # (np. zaplanowano 15 palet na 420 minut, to niemożliwe), to oznacza to na CZERWONO.
+                elif datetime.datetime.strptime(p['Data'], "%d.%m").date().replace(year=datetime.date.today().year) == datetime.datetime.strptime(p['Wysyłka'], "%d.%m").date().replace(year=datetime.date.today().year) and p['Palety'] > (420 // WYDAJNOSC.get(p['Art'], 70)):
+                    bg = "#ffebee" 
+                    border_col = "#ffcdd2"
+                    text_col = "#b71c1c"
+                    alert = "<br><span style='color:red; font-weight:bold; font-size:10px;'>⚠️ BRAK MOCY W DNIU WYSYŁKI</span>"
+
                 st.markdown(f"""<div style="background-color:{bg}; padding:5px; border-radius:5px; margin-bottom:4px; border:1px solid {border_col}; font-size:12px; color:{text_col};">
                     <b>{p['Art']}</b>: {p['Palety']} pal.{alert}<br>
                     <small>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</small>
