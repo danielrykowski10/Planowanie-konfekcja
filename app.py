@@ -14,25 +14,26 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista Produkcji - Pełne Zmiany", layout="wide")
+st.set_page_config(page_title="Planista Produkcji - Realny Plan", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- LOGIKA PLANOWANIA Z DOCIĄŻANIEM ZMIAN ---
+# --- POPRAWIONA LOGIKA PLANOWANIA (REALNE CZASY) ---
 @st.cache_data
 def generuj_plan(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
 
-    # Sortowanie po dacie wysyłki (najpierw te najwcześniejsze)
     zadania = sorted([dict(z) for z in kolejka_tuple], key=lambda x: x['termin'])
     
     plan_dni = {}
     raport_produkcji = []
     data_kursora = data_dzis
     
-    LIMIT_1_ZMIANA = 480 # 8h
-    LIMIT_2_ZMIANY = 960 # 16h
+    # USTALENIA REALNEGO CZASU PRACY
+    # 8h = 480 min. Odejmujemy 60 min na przerwy/sprzątanie/rozruch = 420 min realnej pracy.
+    CZAS_NETTO_ZMIANA = 420 
+    MAX_2_ZMIANY = 840 # Realny czas przy dwóch zmianach (2x 420 min)
 
     for z in zadania:
         ile = z['ile']
@@ -41,17 +42,16 @@ def generuj_plan(kolejka_tuple, data_dzis):
         while ile > 0:
             d_key = data_kursora.strftime("%Y-%m-%d")
             
-            # Jeśli kursor przekroczył termin wysyłki, wracamy do dzisiaj
             if data_kursora > z['termin']: 
                 data_kursora = data_dzis
                 d_key = data_kursora.strftime("%Y-%m-%d")
             
             if d_key not in plan_dni:
-                # Domyślnie planujemy na jedną zmianę, ale jeśli zadanie jest duże, 
-                # lub kolejne zadania dopychają dzień, limit rośnie do 2 zmian (960 min)
-                plan_dni[d_key] = LIMIT_2_ZMIANY if ile * wyd > LIMIT_1_ZMIANA else LIMIT_1_ZMIANA
+                # Jeśli całe pozostałe zamówienie zajmie więcej niż jedną realną zmianę, rezerwujemy drugą.
+                plan_dni[d_key] = MAX_2_ZMIANY if ile * wyd > CZAS_NETTO_ZMIANA else CZAS_NETTO_ZMIANA
             
             wolny = plan_dni[d_key]
+            
             if wolny >= wyd:
                 produkcja = min(wolny // wyd, ile)
                 if produkcja > 0:
@@ -67,12 +67,12 @@ def generuj_plan(kolejka_tuple, data_dzis):
                     ile -= produkcja
                     plan_dni[d_key] -= (produkcja * wyd)
             
-            if ile > 0: # Przejście na następny dzień, jeśli ten jest już pełny (2 zmiany)
+            # Jeśli zamówienie nadal ma palety, a dzień jest pełny -> przechodzimy na kolejny dzień
+            if ile > 0:
                 data_kursora += datetime.timedelta(days=1)
-                if data_kursora.weekday() == 6: 
+                if data_kursora.weekday() == 6: # Pomijamy niedziele
                     data_kursora += datetime.timedelta(days=1)
             else:
-                # Zadanie skończone - nie przesuwamy kursora, kolejne zadanie dociąży ten sam dzień
                 break 
                 
     dni_widok = {}
@@ -85,7 +85,8 @@ def generuj_plan(kolejka_tuple, data_dzis):
     return dni_widok
 
 # --- INTERFEJS ---
-st.title("🥛 Planista Produkcji - Optymalizacja Zmian")
+st.title("🥛 Planista Produkcji - Realny Harmonogram")
+st.info("System uwzględnia teraz 60 minut przerwy/rozruchu na każdą zmianę, aby plan był możliwy do wykonania.")
 
 with st.sidebar:
     st.header("Zarządzanie")
@@ -119,7 +120,7 @@ if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
     dni = generuj_plan(k_tuple, datetime.date.today())
 
-    st.subheader("🗓️ Harmonogram Produkcji (Dociążanie pełnych zmian)")
+    st.subheader("🗓️ Harmonogram Produkcji (Realne dociążenie)")
     cols = st.columns(5)
     sorted_days = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
     
