@@ -12,18 +12,15 @@ def wczytaj_dane():
         try:
             with open(PLIK_DANYCH, "r", encoding="utf-8") as f:
                 dane = json.load(f)
-                # JSON zapisuje daty jako stringi, musimy je przekonwertować z powrotem na obiekty datetime.date
                 for z in dane:
                     z['termin'] = datetime.datetime.strptime(z['termin'], "%Y-%m-%d").date()
                 return dane
         except Exception as e:
-            st.error(f"Błąd wczytywania danych: {e}")
             return []
     return []
 
 def zapisz_dane(kolejka):
     try:
-        # Kopiujemy kolejkę, aby zamienić daty na stringi przed zapisem do JSON
         kolejka_do_zapisu = []
         for z in kolejka:
             z_kopia = z.copy()
@@ -33,7 +30,7 @@ def zapisz_dane(kolejka):
         with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
             json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        st.error(f"Błąd zapisu danych: {e}")
+        pass
 
 # 1. Dane stałe
 DNI_PL = {
@@ -49,7 +46,6 @@ WYDAJNOSC = {
 
 st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 
-# Wczytanie danych z pliku przy uruchomieniu
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = wczytaj_dane()
 
@@ -137,6 +133,7 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                     "Kraj": z.get("kraj", "Czechy"),
                     "Wysyłka": z["termin"].strftime("%d.%m"),
                     "dt_sort": data_kursora,
+                    "termin_sort": z["termin"], # KLUCZOWE: zapisujemy datę wysyłki do sortowania
                     "Nadgodziny": nadgodziny
                 })
                 ile -= produkcja
@@ -146,9 +143,11 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
             if ile > 0:
                 data_kursora += datetime.timedelta(days=1)
 
-    # GRUPOWANIE WIDOKU (Z OZNACZENIEM CAŁEGO DNIA)
+    # GRUPOWANIE WIDOKU 
     widok = {}
-    raport = sorted(raport, key=lambda x: (x['dt_sort'], x['Art']))
+    # KLUCZOWA ZMIANA: Sortujemy najpierw po dacie produkcji, POTEM po dacie wysyłki, na końcu po artykule
+    raport = sorted(raport, key=lambda x: (x['dt_sort'], x['termin_sort'], x['Art']))
+    
     for r in raport:
         dk = r['Data']
         if dk not in widok: 
@@ -173,10 +172,9 @@ with st.sidebar:
     if st.button("➕ DODAJ ZAMÓWIENIE", type="primary", use_container_width=True): 
         st.session_state.pokaz_f = True
     
-    # Przycisk czyszczenia teraz usuwa też plik
     if st.button("🗑️ WYCZYŚĆ WSZYSTKO", use_container_width=True):
         st.session_state.kolejka = []
-        zapisz_dane(st.session_state.kolejka) # Zapis pustej listy
+        zapisz_dane(st.session_state.kolejka) 
         st.cache_data.clear()
         st.rerun()
 
@@ -195,12 +193,12 @@ with st.sidebar:
                             
                             if c2.button("❌", key=f"del_{i}"):
                                 st.session_state.kolejka.pop(i)
-                                zapisz_dane(st.session_state.kolejka) # Zapis po usunięciu
+                                zapisz_dane(st.session_state.kolejka)
                                 st.rerun()
                                 
                             if nowa_il != z['ile']:
                                 st.session_state.kolejka[i]['ile'] = nowa_il
-                                zapisz_dane(st.session_state.kolejka) # Zapis po edycji
+                                zapisz_dane(st.session_state.kolejka)
                                 st.rerun()
 
 if st.session_state.get('pokaz_f'):
@@ -218,7 +216,7 @@ if st.session_state.get('pokaz_f'):
         
         if st.form_submit_button("ZATWIERDŹ"):
             st.session_state.kolejka.extend(nowe_partie)
-            zapisz_dane(st.session_state.kolejka) # Zapis po dodaniu
+            zapisz_dane(st.session_state.kolejka)
             st.session_state.pokaz_f = False
             st.rerun()
 
