@@ -182,4 +182,3 @@ if st.session_state.kolejka:
     st.dataframe(df_full.pivot_table(index="Artykuł", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0), use_container_width=True)
 
 else: st.info("Dodaj zamówienie w panelu bocznym.")
-                        "data_sort": data_dzisiejsza
