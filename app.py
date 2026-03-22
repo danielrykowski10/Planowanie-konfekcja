@@ -25,38 +25,35 @@ def generuj_plan_pelne_zmiany(kolejka_tuple, data_dzis):
     if not kolejka_tuple:
         return {}, []
 
-    # 1. Pobieramy zadania i sortujemy po dacie wysyłki (najpierw pilne)
     zadania = [dict(z) for z in kolejka_tuple]
+    # Sortujemy po dacie wysyłki (najpierw pilne)
     zadania = sorted(zadania, key=lambda x: x['termin'])
 
     MINUTY_ZMIANA = 480 # 8 godzin pracy
     plan_dni = {}
     raport_produkcji = []
 
-    # Aktualna data, od której zaczynamy wypełnianie dni (zaczynamy od jutra lub dzisiaj)
+    # Kursor daty zaczyna od dzisiaj
     data_kursora = data_dzis
 
     for z in zadania:
         ile_do_zrobienia = z['ile']
         wyd = WYDAJNOSC.get(z["art"], 70)
 
-        # Planujemy zamówienie tak długo, aż zostanie zrealizowane
         while ile_do_zrobienia > 0:
             d_key = data_kursora.strftime("%Y-%m-%d")
             
-            # Nie planujemy produkcji PO dacie wysyłki (wyjątek: zmiana 6-14 w dzień wysyłki)
+            # Jeśli kursor uciekł poza datę wysyłki, wracamy do dzisiaj (produkcja pilna)
             if data_kursora > z['termin']:
-                # Jeśli nie zdążyliśmy, wrzucamy jako zaległość na dzisiaj
                 data_kursora = data_dzis
                 d_key = data_kursora.strftime("%Y-%m-%d")
 
             if d_key not in plan_dni:
-                plan_dni[d_key] = MINUTY_ZMIANA # Zaczynamy nową zmianę 8h
+                plan_dni[d_key] = MINUTY_ZMIANA 
             
             wolny_czas = plan_dni[d_key]
             
             if wolny_czas >= wyd:
-                # Ile palet wejdzie do końca tej zmiany (8h)?
                 ile_wejdzie = wolny_czas // wyd
                 ile_produkujemy = min(ile_wejdzie, ile_do_zrobienia)
                 
@@ -73,18 +70,16 @@ def generuj_plan_pelne_zmiany(kolejka_tuple, data_dzis):
                     ile_do_zrobienia -= ile_produkujemy
                     plan_dni[d_key] -= (ile_produkujemy * wyd)
 
-            # Jeśli zmiana jest pełna (zostało za mało czasu na paletę), przechodzimy do następnego dnia
+            # Jeśli zmiana pełna, idziemy do następnego dnia (z pominięciem niedziel)
             if plan_dni[d_key] < wyd:
                 data_kursora += datetime.timedelta(days=1)
-                # Pomijamy niedziele, jeśli nie pracujecie
                 if data_kursora.weekday() == 6: 
                     data_kursora += datetime.timedelta(days=1)
             else:
-                # Jeśli zrobiliśmy całe zamówienie, ale w zmianie został czas, 
-                # NIE przesuwamy kursora – kolejne zamówienie dociąży ten sam dzień.
+                # Zamówienie skończone w tej zmianie
                 break
 
-    # Grupowanie
+    # Grupowanie pod kafelki
     dni_widok = {}
     for r in raport_produkcji:
         dk = r['Data']
@@ -104,6 +99,7 @@ with st.sidebar:
         st.session_state.pokaz_form = True
     if st.button("🗑️ WYCZYŚĆ WSZYSTKO"):
         st.session_state.kolejka = []
+        st.cache_data.clear()
         st.rerun()
 
 if st.session_state.get('pokaz_form'):
@@ -130,14 +126,22 @@ if st.session_state.kolejka:
 
     st.subheader("🗓️ Harmonogram Produkcji (Dociążanie zmian 8h)")
     cols = st.columns(5)
-    for i, dk in enumerate(sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
+    
+    # Sortowanie dat do wyświetlenia
+    posortowane_daty = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
+    
+    for i, dk in enumerate(posortowane_daty):
         with cols[i % 5]:
             d_info = dni[dk]
+            # Nagłówek kafelka
             st.markdown(f"""
-                <div style="border:1px solid #ddd; border-radius:10px; padding:10px; background-color:white; min-height:250px;">
+                <div style="border:1px solid #ddd; border-radius:10px; padding:10px; background-color:white; min-height:100px;">
                     <b style="font-size:16px; color:#1f77b4;">{dk} ({d_info['dzien']})</b><br>
                     <b style="color:green;">Suma: {d_info['suma']} pal.</b><hr style="margin:5px 0;">
+                </div>
             """, unsafe_allow_html=True)
+            
+            # Produkty wewnątrz kafelka
             for p in d_info["p"]:
                 color = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
                 st.markdown(f"""
@@ -146,9 +150,5 @@ if st.session_state.kolejka:
                         <small>📦 Wysyłka: {p['Wysyłka']}</small>
                     </div>
                 """, unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-else:
-    st.info("Brak zamówień w systemie.")
-            st.markdown("</div>", unsafe_allow_html=True)
 else:
     st.info("Brak zamówień w systemie.")
