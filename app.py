@@ -19,7 +19,7 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista JIT - Raporty Osobne", layout="wide")
+st.set_page_config(page_title="Planista JIT - Priorytet Wysyłek", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
@@ -31,7 +31,10 @@ def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
         return {}, [], pd.DataFrame()
     
     zadania = [dict(z) for z in kolejka_tuple]
-    zadania = sorted(zadania, key=lambda x: x['termin'], reverse=True)
+    
+    # KLUCZOWA ZMIANA: Sortowanie po terminie rosnąco (najpierw te, które wyjeżdżają najwcześniej)
+    # Dzięki temu planista najpierw rezerwuje czas na zamówienia z wcześniejszym deadline'em.
+    zadania = sorted(zadania, key=lambda x: x['termin'])
     
     limit_minut = 840
     plan_roboczy = {} 
@@ -42,6 +45,8 @@ def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
         if ilosc_do_zrobienia <= 0: continue
         
         wyd = WYDAJNOSC.get(z["art"], 70)
+        
+        # Próba planowania wstecz: startujemy od dnia przed wysyłką
         dzien_planowania = z['termin'] - datetime.timedelta(days=1)
         if dzien_planowania < data_dzisiejsza:
             dzien_planowania = data_dzisiejsza
@@ -62,13 +67,16 @@ def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
                     "Artykuł": z["art"],
                     "Palety": int(ile_dzis),
                     "Kraj": z.get("kraj", "Czechy"),
-                    "Data Wysyłki": z["termin"].strftime("%d.%m")
+                    "Data Wysyłki": z["termin"].strftime("%d.%m") # Zapamiętujemy datę wysyłki dla tego wpisu
                 })
                 ilosc_do_zrobienia -= ile_dzis
                 plan_roboczy[d_key] -= (ile_dzis * wyd)
             
+            # Jeśli w danym dniu nie ma już miejsca, cofamy się o kolejny dzień (jeśli to możliwe)
             dzien_planowania -= datetime.timedelta(days=1)
+            
             if dzien_planowania < data_dzisiejsza:
+                # Jeśli dotarliśmy do dzisiaj i nadal brakuje palet -> PILNE (nadgodziny)
                 if ilosc_do_zrobienia > 0:
                     wyniki_produkcji.append({
                         "data_sort": data_dzisiejsza,
@@ -174,8 +182,10 @@ if st.session_state.kolejka:
                 <b>Suma: {info['suma']} pal.</b><hr style="margin:4px 0;">""", unsafe_allow_html=True)
             for p in info["p"]:
                 bg = "#d4edda" if p["Kraj"] == "Słowacja" else "transparent"
-                st.markdown(f"""<div style="background-color:{bg}; padding:2px 5px; border-radius:4px; margin-bottom:2px;">
-                    <b>{p['Artykuł']}</b>: {p['Palety']} pal. <br><small>({p['Kraj']})</small>
+                st.markdown(f"""<div style="background-color:{bg}; padding:4px 6px; border-radius:4px; margin-bottom:4px; border: 1px solid #eee;">
+                    <b>{p['Artykuł']}</b>: {p['Palety']} pal. <br>
+                    <small>({p['Kraj']})</small><br>
+                    <span style="font-size: 11px; color: #555;">📦 Wysyłka: {p['Data Wysyłki']}</span>
                 </div>""", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
@@ -200,7 +210,6 @@ if st.session_state.kolejka:
         df_sk = df_full[df_full["Kraj"] == "Słowacja"]
         if not df_sk.empty:
             pivot_sk = df_sk.pivot_table(index="Artykuł", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0)
-            # Stylowanie tabeli na zielono, żeby pasowała do harmonogramu
             st.dataframe(pivot_sk, use_container_width=True)
         else:
             st.write("Brak zamówień na Słowację.")
@@ -214,4 +223,4 @@ if st.session_state.kolejka:
         with st.expander(f"📅 Wysyłka: {data} (Łącznie: {sum_d} pal.)"):
             st.table(df_wys[df_wys["Data Wysyłki"] == data][["Kraj", "Artykuł", "Palety"]])
 
-else: st.info("Brak zamówień.")
+else: st.info("Brak zamówień. Dodaj zamówienie w panelu bocznym.")
