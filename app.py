@@ -1,7 +1,7 @@
 import streamlit as st
 import datetime
 
-# 1. Baza wydajności (minuty na 1 paletę)
+# Baza wydajności (minuty na 1 paletę)
 wydajnosc = {
     "232": 70, "233": 60, "246": 70, "261": 84,
     "236": 84, "254": 52.5, "1221217": 120,
@@ -10,120 +10,117 @@ wydajnosc = {
 
 st.set_page_config(page_title="Planista Mleczarnia", layout="wide")
 
-# 2. Stylizacja wizualna
+# CSS dla tabeli i kafelków
 st.markdown("""
     <style>
-    .day-box { border: 2px solid #eee; border-radius: 10px; padding: 10px; margin: 5px; background: white; min-height: 150px; }
-    .header-yellow { background: #ffe600; padding: 5px; text-align: center; font-weight: bold; border-radius: 5px; color: black; }
-    .header-red { background: #ff4b4b; padding: 5px; text-align: center; font-weight: bold; border-radius: 5px; color: white; }
-    .item-row { border-bottom: 1px solid #f0f0f0; padding: 4px 0; font-size: 15px; }
+    .day-box { border: 2px solid #eee; border-radius: 8px; padding: 10px; margin: 5px; background: white; min-height: 180px; }
+    .header-yellow { background: #ffe600; padding: 5px; text-align: center; font-weight: bold; border-radius: 4px; color: black; margin-bottom: 8px; }
+    .header-red { background: #ff4b4b; padding: 5px; text-align: center; font-weight: bold; border-radius: 4px; color: white; margin-bottom: 8px; }
+    .item-row { border-bottom: 1px solid #f0f0f0; padding: 2px 0; font-size: 14px; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🥛 Harmonogram Porcjowania Sera")
+st.title("🥛 System Planowania Produkcji")
 
-# 3. Inicjalizacja kolejki zamówień
+# Inicjalizacja kolejki
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- PANEL BOCZNY ---
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("➕ Dodaj zamówienie")
+    st.header("➕ Dodaj Artykuł")
     art = st.selectbox("Artykuł:", list(wydajnosc.keys()))
-    ile = st.number_input("Ile palet:", min_value=1, value=10, step=1)
-    d_start = st.date_input("Dzień rozpoczęcia:", datetime.date.today())
-    d_koniec = st.date_input("Termin (Deadline):", datetime.date.today() + datetime.timedelta(days=3))
+    ile = st.number_input("Liczba palet:", min_value=1, step=1, value=10)
+    termin = st.date_input("Termin (Deadline):", datetime.date.today() + datetime.timedelta(days=3))
     
     if st.button("DODAJ DO PLANU"):
-        st.session_state.kolejka.append({
-            "art": art, 
-            "ile": ile, 
-            "start": d_start, 
-            "termin": d_koniec
-        })
+        st.session_state.kolejka.append({"art": art, "ile": ile, "termin": termin})
         st.rerun()
 
-    if st.button("🗑️ WYCZYŚĆ WSZYSTKO"):
+    if st.button("WYCZYŚĆ WSZYSTKO"):
         st.session_state.kolejka = []
         st.rerun()
 
     st.write("---")
-    st.subheader("📋 Lista w kolejce:")
+    st.subheader("📋 Lista zamówień:")
     for i, z in enumerate(st.session_state.kolejka):
-        st.write(f"{i+1}. **{z['art']}**: {z['ile']} pal. (od {z['start'].strftime('%d.%m')})")
+        st.write(f"{i+1}. {z['art']} | {z['ile']} pal. | do {z['termin'].strftime('%d.%m')}")
 
-# --- GŁÓWNY PANEL OBLICZEŃ ---
+# --- GŁÓWNY PANEL ---
 if not st.session_state.kolejka:
-    st.info("Dodaj pierwsze zamówienie w panelu bocznym po lewej.")
+    st.info("Dodaj artykuły w panelu bocznym, aby wygenerować harmonogram.")
 else:
-    # Kopiujemy i sortujemy listę według daty startu
-    zadania = sorted([dict(z) for z in st.session_state.kolejka], key=lambda x: x['start'])
-    
+    # OBLICZENIA
     dni_planu = {}
-    limit_minut = 840  # 14h (dwie zmiany po 7h netto)
-    aktualna_data = min(z["start"] for z in zadania)
-    wolny_czas_dzis = limit_minut
+    limit_minut_dziennie = 840  # 14h (6-22)
+    aktualna_data = datetime.date.today()
+    wolny_czas_dzis = limit_minut_dziennie
+    
+    # Tworzymy kopię roboczą zadań
+    zadania = []
+    for z in st.session_state.kolejka:
+        zadania.append({
+            "art": z["art"], 
+            "ile": z["ile"], 
+            "minuty": z["ile"] * wydajnosc[z["art"]],
+            "termin": z["termin"]
+        })
 
+    # Główna pętla rozdzielająca na dni
     while zadania:
-        # Wybieramy tylko te zadania, które mogą się zacząć dzisiaj lub wcześniej
-        dostepne = [z for z in zadania if z["start"] <= aktualna_data]
-        
-        if not dostepne:
-            # Jeśli nic nie można robić dzisiaj, skaczemy do najbliższej daty startu dowolnego zadania
-            aktualna_data = min(z["start"] for z in zadania)
-            wolny_czas_dzis = limit_minut
-            continue
-
         d_key = aktualna_data.strftime("%Y-%m-%d")
         if d_key not in dni_planu:
             dni_planu[d_key] = {"data": aktualna_data, "pozycje": []}
-
-        # Bierzemy pierwsze dostępne zadanie
-        zadanie = dostepne[0]
-        wyd = wydajnosc.get(zadanie["art"], 70)
         
-        mozliwe = wolny_czas_dzis // wyd
-        ile_dzis = min(mozliwe, zadanie["ile"])
-
-        if ile_dzis > 0:
+        current_job = zadania[0]
+        czas_jednej = wydajnosc[current_job["art"]]
+        
+        # Ile palet wejdzie jeszcze dzisiaj?
+        mozliwe_palety = wolny_czas_dzis // czas_jednej
+        
+        if mozliwe_palety > 0:
+            robimy_teraz = min(mozliwe_palety, current_job["ile"])
+            spoznione = aktualna_data > current_job["termin"]
+            
             dni_planu[d_key]["pozycje"].append({
-                "art": zadanie["art"],
-                "ile": int(ile_dzis),
-                "alert": aktualna_data > zadanie["termin"]
+                "art": current_job["art"],
+                "ile": int(robimy_teraz),
+                "alert": spoznione
             })
-            zadanie["ile"] -= ile_dzis
-            wolny_czas_dzis -= (ile_dzis * wyd)
-
-        # Jeśli zadanie skończone, usuń z listy
-        if zadanie["ile"] <= 0:
-            zadania.remove(zadanie)
-
-        # Jeśli dzień się skończył lub brak dostępnych zadań w tej chwili - następny dzień
-        if wolny_czas_dzis < 52 or not dostepne:
-            aktualna_data += datetime.timedelta(days=1)
-            wolny_czas_dzis = limit_minut
+            
+            current_job["ile"] -= robimy_teraz
+            wolny_czas_dzis -= (robimy_teraz * czas_jednej)
         
-        if len(dni_planu) > 60: break # Bezpiecznik na 2 miesiące planu
+        # Jeśli artykuł skończony, usuń go z listy zadań
+        if current_job["ile"] <= 0:
+            zadania.pop(0)
+            
+        # Jeśli dzień pełny lub brak zadań, przeskocz do jutra
+        if wolny_czas_dzis < 52 or (not zadania and mozliwe_palety == 0):
+            aktualna_data += datetime.timedelta(days=1)
+            wolny_czas_dzis = limit_minut_dziennie
+        
+        if len(dni_planu) > 100: break # Bezpiecznik
 
-    # --- RYSOWANIE KAFELKÓW ---
-    st.subheader("📅 Harmonogram Produkcji")
+    # RYSOWANIE
+    st.subheader("📅 Harmonogram Dzienny")
     posortowane_daty = sorted(dni_planu.keys())
     
-    # Wyświetlanie po 4 dni w rzędzie
+    # Wyświetlanie po 4 dni w rzędzie (lepiej wygląda na mniejszych ekranach)
     for i in range(0, len(posortowane_daty), 4):
         cols = st.columns(4)
         for j in range(4):
             if i + j < len(posortowane_daty):
                 data_iso = posortowane_daty[i+j]
-                d = dni_planu[data_iso]
+                dane = dni_planu[data_iso]
                 with cols[j]:
-                    ma_alert = any(p["alert"] for p in d["pozycje"])
-                    klasa = "header-red" if ma_alert else "header-yellow"
+                    ma_alert = any(p["alert"] for p in dane["pozycje"])
+                    klasa_naglowka = "header-red" if ma_alert else "header-yellow"
                     
                     st.markdown(f'<div class="day-box">', unsafe_allow_html=True)
-                    st.markdown(f'<div class="{klasa}">{d["data"].strftime("%d.%m %A")}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="{klasa_naglowka}">{dane["data"].strftime("%d.%m %A")}</div>', unsafe_allow_html=True)
                     
-                    for p in d["pozycje"]:
+                    for p in dane["pozycje"]:
                         wykrzyknik = " ⚠️" if p["alert"] else ""
                         st.markdown(f'<div class="item-row"><b>{p["art"]}</b>: {p["ile"]} pal.{wykrzyknik}</div>', unsafe_allow_html=True)
                     
