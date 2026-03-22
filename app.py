@@ -1,6 +1,39 @@
 import streamlit as st
 import datetime
 import pandas as pd
+import json
+import os
+
+# --- KONFIGURACJA ZAPISU DANYCH ---
+PLIK_DANYCH = "dane_zamowien.json"
+
+def wczytaj_dane():
+    if os.path.exists(PLIK_DANYCH):
+        try:
+            with open(PLIK_DANYCH, "r", encoding="utf-8") as f:
+                dane = json.load(f)
+                # JSON zapisuje daty jako stringi, musimy je przekonwertować z powrotem na obiekty datetime.date
+                for z in dane:
+                    z['termin'] = datetime.datetime.strptime(z['termin'], "%Y-%m-%d").date()
+                return dane
+        except Exception as e:
+            st.error(f"Błąd wczytywania danych: {e}")
+            return []
+    return []
+
+def zapisz_dane(kolejka):
+    try:
+        # Kopiujemy kolejkę, aby zamienić daty na stringi przed zapisem do JSON
+        kolejka_do_zapisu = []
+        for z in kolejka:
+            z_kopia = z.copy()
+            z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
+            kolejka_do_zapisu.append(z_kopia)
+            
+        with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
+            json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        st.error(f"Błąd zapisu danych: {e}")
 
 # 1. Dane stałe
 DNI_PL = {
@@ -16,8 +49,9 @@ WYDAJNOSC = {
 
 st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 
+# Wczytanie danych z pliku przy uruchomieniu
 if 'kolejka' not in st.session_state:
-    st.session_state.kolejka = []
+    st.session_state.kolejka = wczytaj_dane()
 
 # --- PLANOWANIE W PRZÓD ---
 @st.cache_data
@@ -138,8 +172,11 @@ with st.sidebar:
     st.header("⚙️ Zarządzanie")
     if st.button("➕ DODAJ ZAMÓWIENIE", type="primary", use_container_width=True): 
         st.session_state.pokaz_f = True
+    
+    # Przycisk czyszczenia teraz usuwa też plik
     if st.button("🗑️ WYCZYŚĆ WSZYSTKO", use_container_width=True):
         st.session_state.kolejka = []
+        zapisz_dane(st.session_state.kolejka) # Zapis pustej listy
         st.cache_data.clear()
         st.rerun()
 
@@ -155,11 +192,15 @@ with st.sidebar:
                         if z['termin'] == d and z['kraj'] == kraj:
                             c1, c2 = st.columns([3, 1])
                             nowa_il = c1.number_input(f"Art {z['art']}", value=int(z['ile']), key=f"ed_{i}")
+                            
                             if c2.button("❌", key=f"del_{i}"):
                                 st.session_state.kolejka.pop(i)
+                                zapisz_dane(st.session_state.kolejka) # Zapis po usunięciu
                                 st.rerun()
+                                
                             if nowa_il != z['ile']:
                                 st.session_state.kolejka[i]['ile'] = nowa_il
+                                zapisz_dane(st.session_state.kolejka) # Zapis po edycji
                                 st.rerun()
 
 if st.session_state.get('pokaz_f'):
@@ -174,8 +215,10 @@ if st.session_state.get('pokaz_f'):
             with cols[i % 3]:
                 v = st.number_input(f"Art {art_id}", min_value=0, step=1, key=f"add_{art_id}")
                 if v > 0: nowe_partie.append({"art": art_id, "ile": v, "termin": term_n, "kraj": kraj_n})
+        
         if st.form_submit_button("ZATWIERDŹ"):
             st.session_state.kolejka.extend(nowe_partie)
+            zapisz_dane(st.session_state.kolejka) # Zapis po dodaniu
             st.session_state.pokaz_f = False
             st.rerun()
 
@@ -193,7 +236,6 @@ if st.session_state.kolejka:
         with grid[i % 5]:
             inf = dni[dk]
             
-            # --- ZMIANA WYGLĄDU CAŁEGO KAFELKA DLA WYDŁUŻONEJ ZMIANY ---
             if inf.get("nadgodziny_w_dniu"):
                 box_bg = "#fff8e1"
                 box_border = "#ffb300"
@@ -213,11 +255,9 @@ if st.session_state.kolejka:
                 text_col = "#000"
                 alert = ""
                 
-                # Zostawiam subtelne pogrubienie dla tego konkretnego artykułu, żeby było wiadomo który to
                 if p.get('Nadgodziny'):
                     border_col = "#ffcc80"
                     text_col = "#e65100"
-                
                 elif datetime.datetime.strptime(p['Data'], "%d.%m").date().replace(year=datetime.date.today().year) == datetime.datetime.strptime(p['Wysyłka'], "%d.%m").date().replace(year=datetime.date.today().year) and p['Palety'] > (420 // WYDAJNOSC.get(p['Art'], 70)):
                     bg = "#ffebee" 
                     border_col = "#ffcdd2"
@@ -230,7 +270,7 @@ if st.session_state.kolejka:
                 </div>""", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- TABELA KONTROLNA Z KOLOROWANIEM ---
+    # --- TABELA KONTROLNA ---
     st.divider()
     st.subheader("🔍 Kontrola zgodności zamówień")
     
@@ -253,12 +293,10 @@ if st.session_state.kolejka:
     final.columns = ['Termin Wysyłki', 'Kraj', 'Artykuł', 'Zamówiono (pal)', 'Zaplanowano (pal)']
     final['Status'] = final.apply(lambda x: "✅ OK" if x['Zamówiono (pal)'] == x['Zaplanowano (pal)'] else "❌ BŁĄD", axis=1)
     
-    # Funkcja do stylowania wierszy (Słowacja na zielono)
     def style_wiersze(row):
         kolor = '#d4edda' if row['Kraj'] == 'Słowacja' else ''
         return [f'background-color: {kolor}'] * len(row)
     
-    # Wyświetlamy jako st.dataframe, które obsługuje obiekt .style z Pandasa
     st.dataframe(final.style.apply(style_wiersze, axis=1), use_container_width=True, hide_index=True)
 
 else:
