@@ -22,9 +22,8 @@ with st.sidebar:
         cols_input = st.columns(2)
         dane_form = []
         for i, (art_id, czas) in enumerate(WYDAJNOSC.items()):
-            # Wyświetlamy artykuły w dwóch kolumnach w menu dla szybkości
             with cols_input[i % 2]:
-                n = st.number_input(f"Art {art_id}", min_value=0, step=1, value=0)
+                n = st.number_input(f"Art {art_id}", min_value=0, step=1, value=0, key=f"input_{art_id}")
                 if n > 0:
                     dane_form.append({"art": art_id, "ile": n})
         
@@ -44,5 +43,4 @@ with st.sidebar:
         st.session_state.kolejka = []
         st.rerun()
 
-# --- SZYBKIE OBLICZENIA ---
-def przelicz_harmonogram(kolejka_
+# --- S
