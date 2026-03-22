@@ -261,5 +261,4 @@ if st.session_state.kolejka:
     st.dataframe(final.style.apply(lambda row: ['background-color: #d4edda' if row['Kraj'] == 'Słowacja' else ''] * len(row), axis=1), use_container_width=True, hide_index=True)
 else:
     st.info("Brak zamówień. Dodaj je w panelu bocznym.")
-else:
-    st.info("Brak zamówień. Dodaj je w panelu bocznym.")
+
