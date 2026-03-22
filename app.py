@@ -19,7 +19,7 @@ st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- PLANOWANIE W PRZÓD (NADGODZINY TYLKO PRZED DNIEM WYSYŁKI) ---
+# --- PLANOWANIE W PRZÓD ---
 @st.cache_data
 def generuj_plan_forward(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
@@ -28,14 +28,12 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
     
     plan_dni = {}
     raport = []
-    CZAS_NETTO = 840 # 2 zmiany (14h)
+    CZAS_NETTO = 840 # 2 zmiany po 7h netto (14h łącznie)
     ostatni_art = None
     
     while zadania:
-        # 1. Priorytet: Najbliższa wysyłka
         najblizsza_wysylka = min(z['termin'] for z in zadania)
         
-        # 2. Priorytet: Kontynuacja artykułu
         idx_wybranego = -1
         for i, z in enumerate(zadania):
             if z['termin'] == najblizsza_wysylka and z['art'] == ostatni_art:
@@ -65,33 +63,57 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                 
             wolny_czas = plan_dni[d_key]
             
-            # W dniu wysyłki twardy limit 1 zmiany (420 min)
+            # W dniu wysyłki twardy limit 1 zmiany (420 min) DLA TEGO ZAMÓWIENIA
             if data_kursora == z['termin']:
-                dostepny_czas = max(0, wolny_czas - 420)
+                # Dostępny czas to wolny czas, ale obcięty do max 420 (bo to tylko 1 zmiana rano)
+                # Musimy też odjąć to, co ewentualnie zaplanowano już na popołudnie (inne wysyłki)
+                # Dlatego po prostu sprawdzamy, czy w pierwszych 420 min. jest miejsce.
+                # Uproszczenie: w dniu wysyłki dana paleta ma max 420 min do dyspozycji minus zajęte rano.
+                # W systemie rezerwacji w tył to było łatwiejsze, w przód trzeba to obsłużyć ręcznie:
+                zajete_dzis = CZAS_NETTO - wolny_czas
+                dostepny_czas = max(0, 420 - zajete_dzis) 
             else:
                 dostepny_czas = wolny_czas
                 
             produkcja = min(dostepny_czas // wyd, ile)
             nadgodziny = False
             
-            # --- ZABEZPIECZENIE PRZED NADGODZINAMI W DNIU WYSYŁKI ---
+            # --- ZMIANA: Zezwalamy na planowanie w dniu wysyłki na 1 zmianie ---
             jutro = data_kursora + datetime.timedelta(days=1)
             if jutro.weekday() == 6:
                 jutro += datetime.timedelta(days=1)
                 
-            # Jeśli jutro jest dniem wysyłki (lub po nim), a my nadal nie skończyliśmy i to nie jest dzień wysyłki
-            if jutro >= z['termin'] and ile > produkcja and data_kursora < z['termin']:
-                produkcja = ile # Wymuszamy zrobienie całości "dzisiaj"
-                nadgodziny = True
+            # Jeśli JUTRO jest po terminie wysyłki (czyli dzisiaj JEST dniem wysyłki),
+            # a my nadal mamy towar do zrobienia, TO znaczy, że nawet 1 zmiana rano nie wystarczyła.
+            # W takiej sytuacji musimy wrzucić to jako nadgodziny W DZIEŃ POPRZEDZAJĄCY.
+            # Ale nasz kursor idzie do przodu.
+            
+            # Nowa logika wymuszania:
+            # Jeśli data kursora to dzień PRZED wysyłką...
+            jesli_kursor_to_przed_wysylka = jutro == z['termin']
+            
+            if jesli_kursor_to_przed_wysylka:
+                # Ile czasu będziemy mieli JUTRO rano?
+                d_key_jutro = jutro.strftime("%Y-%m-%d")
+                czas_jutro = plan_dni.get(d_key_jutro, CZAS_NETTO)
+                zajete_jutro = CZAS_NETTO - czas_jutro
+                dostepne_jutro = max(0, 420 - zajete_jutro)
+                
+                # Ile palet zrobimy jutro rano?
+                ile_zrobimy_jutro = dostepne_jutro // wyd
+                
+                # Jeśli po odjęciu tego co zrobimy dzisiaj ORAZ tego co zmieści się jutro rano,
+                # NADAL zostaje towar, to musimy dopchać go DZISIAJ jako nadgodziny.
+                if (ile - produkcja) > ile_zrobimy_jutro:
+                    nadwyzka = (ile - produkcja) - ile_zrobimy_jutro
+                    produkcja += nadwyzka # Dopychamy na siłę dzisiaj
+                    nadgodziny = True
 
-            # Jeśli jesteśmy w dniu wysyłki i nadal brakuje czasu, to jest błąd krytyczny układu 
-            # (za dużo zamówień naraz wpisanych na dziś/jutro). 
-            # Wtedy wymusi produkcję bez nadgodzin, ignorując limit, żeby pokazać opóźnienie w innej formie.
+            # Jeśli jesteśmy w dniu wysyłki i mimo ograniczenia 420 zostaje nam towar (bo się nie cofnęliśmy/coś poszło nie tak)
+            # Wrzucamy go po prostu w plan z komunikatem o braku mocy (to bezpiecznik)
             if data_kursora == z['termin'] and ile > produkcja:
-                produkcja = ile # "Dopycha" do dnia wysyłki
-                # Zostawiamy nadgodziny=False, ale oznacza to przekroczenie 420 min.
-                # W widoku można to dodatkowo ostylować jako czerwony alarm, ale ustaliliśmy nadgodziny tylko przed wysyłką.
-
+                produkcja = ile # Wpychamy na dzisiaj resztę, zignorujemy brak 1 zmiany
+                
             if produkcja > 0:
                 raport.append({
                     "Data": data_kursora.strftime("%d.%m"),
@@ -120,7 +142,7 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
         widok[dk]["suma"] += r["Palety"]
     return widok, raport
 
-# --- PANEL BOCZNY ---
+# --- INTERFEJS ---
 with st.sidebar:
     st.markdown("""
         <style>
@@ -194,15 +216,13 @@ if st.session_state.kolejka:
                 text_col = "#000"
                 alert = ""
                 
-                # Oznaczenie nadgodzin tylko gdy są ustawione (czyli przed dniem wysyłki)
                 if p.get('Nadgodziny'):
                     bg = "#fff3e0" 
                     border_col = "#ffcc80"
                     text_col = "#e65100"
                     alert = "<br><span style='color:#e65100; font-weight:bold; font-size:10px;'>⚠️ WYDŁUŻONA ZMIANA</span>"
                 
-                # Dodatkowe zabezpieczenie: jeśli system wypchnie za dużo na dzień wysyłki
-                # (np. zaplanowano 15 palet na 420 minut, to niemożliwe), to oznacza to na CZERWONO.
+                # Zabezpieczenie: za dużo zaplanowane na dzień wysyłki
                 elif datetime.datetime.strptime(p['Data'], "%d.%m").date().replace(year=datetime.date.today().year) == datetime.datetime.strptime(p['Wysyłka'], "%d.%m").date().replace(year=datetime.date.today().year) and p['Palety'] > (420 // WYDAJNOSC.get(p['Art'], 70)):
                     bg = "#ffebee" 
                     border_col = "#ffcdd2"
