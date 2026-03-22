@@ -14,80 +14,76 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Konfekcja SM ", layout="wide")
+st.set_page_config(page_title="Konfekcja SM - Planista", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- LOGIKA PLANOWANIA JIT (PEŁNE ZMIANY + BRAK PRZEZBROJEŃ) ---
+# --- PLANOWANIE WSTECZNE (PRAWIDŁOWY JIT) ---
 @st.cache_data
 def generuj_plan_jit(kolejka_tuple, data_dzis):
     if not kolejka_tuple: return {}, []
 
-    # Sortowanie: 1. Data wysyłki, 2. Artykuł (dla grupowania)
+    # Sortowanie: najpierw data wysyłki (najbliższe), potem artykuł (żeby uniknąć przezbrojeń)
     zadania = [dict(z) for z in kolejka_tuple]
     zadania = sorted(zadania, key=lambda x: (x['termin'], x['art']))
     
     plan_dni = {}
     raport = []
-    CZAS_NETTO = 840 # 2 zmiany po 7h netto (14h łącznie)
+    CZAS_NETTO = 840 # 2 zmiany po 7h netto pracy (14h łącznie)
     
-    data_kursora = data_dzis
-    ostatni_art = None 
-
-    while zadania:
-        d_key = data_kursora.strftime("%Y-%m-%d")
-        if d_key not in plan_dni:
-            plan_dni[d_key] = CZAS_NETTO
-        
-        # Szukamy zadania z najbliższą datą wysyłki
-        najblizsza_data = min(z['termin'] for z in zadania)
-        
-        # Szukamy kontynuacji artykułu dla tej daty
-        idx_wybranego = -1
-        for i, z in enumerate(zadania):
-            if z['termin'] == najblizsza_data and z['art'] == ostatni_art:
-                idx_wybranego = i
-                break
-        
-        if idx_wybranego == -1:
-            for i, z in enumerate(zadania):
-                if z['termin'] == najblizsza_data:
-                    idx_wybranego = i
-                    break
-
-        z = zadania.pop(idx_wybranego)
+    for z in zadania:
         ile = z['ile']
         wyd = WYDAJNOSC.get(z["art"], 70)
         
-        while ile > 0:
-            wolny_czas = plan_dni[data_kursora.strftime("%Y-%m-%d")]
+        # Startujemy z planowaniem od Daty Wysyłki i cofamy się
+        data_planu = z['termin']
+        if data_planu.weekday() == 6: # Jeśli wysyłka wypada w niedzielę, planuj na sobotę
+            data_planu -= datetime.timedelta(days=1)
             
-            if wolny_czas >= wyd:
-                produkcja = min(wolny_czas // wyd, ile)
-                if produkcja > 0:
-                    raport.append({
-                        "Data": data_kursora.strftime("%d.%m"),
-                        "Art": z["art"],
-                        "Palety": int(produkcja),
-                        "Kraj": z.get("kraj", "Czechy"),
-                        "Wysyłka": z["termin"].strftime("%d.%m"),
-                        "dt_sort": data_kursora,
-                        "oryg_termin": z['termin']
-                    })
-                    ile -= produkcja
-                    plan_dni[data_kursora.strftime("%Y-%m-%d")] -= (produkcja * wyd)
-                    ostatni_art = z["art"]
+        while ile > 0:
+            if data_planu <= data_dzis:
+                data_planu = data_dzis # Nie cofamy się w przeszłość, zrzucamy na dzisiaj
+            
+            d_key = data_planu.strftime("%Y-%m-%d")
+            if d_key not in plan_dni:
+                plan_dni[d_key] = CZAS_NETTO
+            
+            wolny_czas = plan_dni[d_key]
+            
+            if data_planu == data_dzis:
+                # Ratunkowo, na "dzisiaj" wciskamy całą resztę, choćby brakowało czasu (oznaczymy jako nadgodziny)
+                produkcja = ile
+            else:
+                # W normalny dzień produkujemy tylko tyle, ile wejdzie w maszynę
+                produkcja = min(max(0, int(wolny_czas // wyd)), ile)
+            
+            if produkcja > 0:
+                czy_pilne = (data_planu == data_dzis and wolny_czas < (produkcja * wyd))
+                raport.append({
+                    "Data": data_planu.strftime("%d.%m"),
+                    "Art": z["art"],
+                    "Palety": int(produkcja),
+                    "Kraj": z.get("kraj", "Czechy"),
+                    "Wysyłka": z["termin"].strftime("%d.%m"),
+                    "dt_sort": data_planu,
+                    "Pilne": czy_pilne
+                })
+                ile -= produkcja
+                plan_dni[d_key] -= (produkcja * wyd)
 
             if ile > 0: 
-                data_kursora += datetime.timedelta(days=1)
-                if data_kursora.weekday() == 6: data_kursora += datetime.timedelta(days=1)
-                if data_kursora.strftime("%Y-%m-%d") not in plan_dni:
-                    plan_dni[data_kursora.strftime("%Y-%m-%d")] = CZAS_NETTO
-            else:
-                break
+                # Jeśli został towar -> Cofamy się o dzień WSTECZ (Gwarancja JIT)
+                if data_planu > data_dzis:
+                    data_planu -= datetime.timedelta(days=1)
+                    if data_planu.weekday() == 6: # Przeskakujemy niedziele
+                        data_planu -= datetime.timedelta(days=1)
+                else:
+                    break # Zapobieganie błędom, pętla skończy się na 'data_dzis'
 
     widok = {}
+    # Grupowanie asortymentu w ramach jednego dnia, by ułatwić życie na maszynie
+    raport = sorted(raport, key=lambda x: (x['dt_sort'], x['Art']))
     for r in raport:
         dk = r['Data']
         if dk not in widok: 
@@ -98,7 +94,14 @@ def generuj_plan_jit(kolejka_tuple, data_dzis):
 
 # --- PANEL BOCZNY ---
 with st.sidebar:
-    st.title("🏭 Konfekcja SM")
+    st.markdown("""
+        <style>
+            .sidebar-title { display: flex; align-items: center; gap: 10px; font-size: 24px; font-weight: bold; color: #1f77b4; }
+        </style>
+    """, unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-title">Konfekcja SM</div>', unsafe_allow_html=True)
+    st.header("⚙️ Zarządzanie")
+    
     if st.button("➕ DODAJ NOWE ZAMÓWIENIE", type="primary", use_container_width=True): 
         st.session_state.pokaz_f = True
     
@@ -125,9 +128,8 @@ with st.sidebar:
                                 st.session_state.kolejka[i]['ile'] = nowa_il
                                 st.rerun()
 
-# --- FORMULARZ (POPRAWIONY) ---
+# --- FORMULARZ DODAWANIA ---
 if st.session_state.get('pokaz_f'):
-    # Zmieniamy st.button na st.form_submit_button wewnątrz formularza
     with st.form("quick_add"):
         st.subheader("📝 Nowe zamówienie")
         c1, c2 = st.columns(2)
@@ -139,10 +141,8 @@ if st.session_state.get('pokaz_f'):
         for i, art_id in enumerate(WYDAJNOSC.keys()):
             with cols[i % 3]:
                 v = st.number_input(f"Art {art_id}", min_value=0, step=1, key=f"add_{art_id}")
-                if v > 0: 
-                    nowe_partie.append({"art": art_id, "ile": v, "termin": term_n, "kraj": kraj_n})
+                if v > 0: nowe_partie.append({"art": art_id, "ile": v, "termin": term_n, "kraj": kraj_n})
         
-        # TO JEST POPRAWKA:
         if st.form_submit_button("ZATWIERDŹ"):
             st.session_state.kolejka.extend(nowe_partie)
             st.session_state.pokaz_f = False
@@ -166,8 +166,11 @@ if st.session_state.kolejka:
                 <b style="color:green;">Łącznie: {inf['suma']} pal.</b><hr style="margin:4px 0;">""", unsafe_allow_html=True)
             for p in inf["p"]:
                 bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
+                nadgodziny_alert = " <span style='color:red; font-size:10px; font-weight:bold;'>⚠️ NADGODZINY</span>" if p.get('Pilne') else ""
+                
                 st.markdown(f"""<div style="background-color:{bg}; padding:5px; border-radius:5px; margin-bottom:4px; border:1px solid #eee; font-size:12px;">
-                    <b>{p['Art']}</b>: {p['Palety']} pal.<br><small>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</small>
+                    <b>{p['Art']}</b>: {p['Palety']} pal.{nadgodziny_alert}<br>
+                    <small>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</small>
                 </div>""", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
