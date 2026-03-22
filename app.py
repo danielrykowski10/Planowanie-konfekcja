@@ -11,30 +11,23 @@ wydajnosc = {
 
 st.set_page_config(page_title="Planista Mleczarnia", layout="wide")
 
-# 2. Stylizacja (CSS)
-st.markdown("""
-    <style>
-    .day-box { border: 2px solid #eee; border-radius: 8px; padding: 10px; margin: 5px; background: white; min-height: 150px; }
-    .header-yellow { background: #ffe600; padding: 5px; text-align: center; font-weight: bold; border-radius: 4px; color: black; }
-    .header-red { background: #ff4b4b; padding: 5px; text-align: center; font-weight: bold; border-radius: 4px; color: white; }
-    .item-row { border-bottom: 1px solid #f0f0f0; padding: 2px 0; font-size: 14px; }
-    </style>
-""", unsafe_allow_html=True)
+st.title("🥛 Planista Produkcji - Panel Sterowania")
 
-st.title("🥛 Planista Produkcji - Wersja Stabilna")
-
-# 3. Inicjalizacja danych
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# 4. PANEL BOCZNY
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("📂 Importuj z Excel/CSV")
-    plik = st.file_uploader("Wgraj plik", type=['xlsx', 'csv'])
+    st.header("📂 Importuj dane")
+    plik = st.file_uploader("Wgraj Excel (art, ile, start, termin)", type=['xlsx', 'csv'])
     
     if plik:
         try:
-            df = pd.read_excel(plik) if plik.name.endswith('.xlsx') else pd.read_csv(plik)
+            if plik.name.endswith('.csv'):
+                df = pd.read_csv(plik)
+            else:
+                df = pd.read_excel(plik)
+                
             if st.button("📥 Dodaj dane z pliku"):
                 for _, row in df.iterrows():
                     st.session_state.kolejka.append({
@@ -43,4 +36,58 @@ with st.sidebar:
                         "start": pd.to_datetime(row['start']).date(),
                         "termin": pd.to_datetime(row['termin']).date()
                     })
-                st
+                st.success("Dodano!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Błąd pliku: {e}")
+
+    st.write("---")
+    if st.button("🗑️ Wyczyść listę"):
+        st.session_state.kolejka = []
+        st.rerun()
+
+# --- GŁÓWNY WIDOK ---
+if not st.session_state.kolejka:
+    st.info("Dodaj zamówienie przez plik lub powiedz mi, co dopisać.")
+else:
+    # Obliczenia (uproszczone)
+    zadania = sorted([dict(z) for z in st.session_state.kolejka], key=lambda x: x['start'])
+    dni_planu = {}
+    aktualna_data = min(z["start"] for z in zadania)
+    wolny_czas = 840 # 14h
+
+    while zadania:
+        d_key = aktualna_data.strftime("%Y-%m-%d")
+        if d_key not in dni_planu:
+            dni_planu[d_key] = {"data": aktualna_data, "pozycje": []}
+        
+        dostepne = [z for z in zadania if z["start"] <= aktualna_data]
+        if not dostepne:
+            aktualna_data += datetime.timedelta(days=1)
+            continue
+            
+        z = dostepne[0]
+        wyd = wydajnosc.get(z["art"], 70)
+        ile_dzis = min(wolny_czas // wyd, z["ile"])
+        
+        if ile_dzis > 0:
+            dni_planu[d_key]["pozycje"].append({"art": z["art"], "ile": int(ile_dzis)})
+            z["ile"] -= ile_dzis
+            wolny_czas -= (ile_dzis * wyd)
+        
+        if z["ile"] <= 0:
+            zadania.remove(z)
+        
+        if wolny_czas < 52 or not dostepne:
+            aktualna_data += datetime.timedelta(days=1)
+            wolny_czas = 840
+        if len(dni_planu) > 100: break
+
+    # Wyświetlanie
+    cols = st.columns(5)
+    for i, d_key in enumerate(sorted(dni_planu.keys())):
+        d = dni_planu[d_key]
+        with cols[i % 5]:
+            st.markdown(f"### {d['data'].strftime('%d.%m')}")
+            for p in d["pozycje"]:
+                st.write(f"**{p['art']}**: {p['ile']} pal.")
