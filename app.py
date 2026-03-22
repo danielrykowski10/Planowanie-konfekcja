@@ -1,6 +1,5 @@
 import streamlit as st
 import datetime
-import math
 
 # Baza wydajności (minuty na 1 paletę)
 wydajnosc = {
@@ -9,102 +8,109 @@ wydajnosc = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista Mleczarnia", page_icon="🥛", layout="wide")
+st.set_page_config(page_title="Planista Produkcji", layout="wide")
 
-st.title("🥛 Harmonogram Produkcji")
+st.title("🥛 System Kolejkowania Zamówień")
 
-# Prosta inicjalizacja listy
-if 'koszyk' not in st.session_state:
-    st.session_state.koszyk = []
+# Inicjalizacja listy zamówień
+if 'kolejka' not in st.session_state:
+    st.session_state.kolejka = []
 
-# PANEL BOCZNY - BEZ FORMULARZA (żeby działało od razu)
+# --- PANEL BOCZNY (WPROWADZANIE) ---
 with st.sidebar:
-    st.header("➕ Dodaj zamówienie")
-    wybrany = st.selectbox("Artykuł:", list(wydajnosc.keys()))
-    ile = st.number_input("Ilość palet:", min_value=1, value=5)
-    termin = st.date_input("Termin oddania:", datetime.date.today() + datetime.timedelta(days=2))
+    st.header("🛒 Nowe Zamówienie")
+    art = st.selectbox("Wybierz artykuł:", list(wydajnosc.keys()))
+    ile = st.number_input("Ile palet:", min_value=1, step=1, value=5)
+    termin = st.date_input("Termin (Deadline):", datetime.date.today() + datetime.timedelta(days=2))
     
-    if st.button("DODAJ DO LISTY"):
-        st.session_state.koszyk.append({
-            "art": wybrany,
+    if st.button("➕ DODAJ DO KOLEJKI"):
+        st.session_state.kolejka.append({
+            "art": art,
             "ile": ile,
-            "deadline": termin
+            "termin": termin
         })
         st.rerun()
 
-    if st.button("WYCZYŚĆ LISTĘ"):
-        st.session_state.koszyk = []
+    if st.button("🗑️ WYCZYŚĆ WSZYSTKO"):
+        st.session_state.kolejka = []
         st.rerun()
 
     st.write("---")
-    st.write("**Twoja aktualna lista:**")
-    for i, z in enumerate(st.session_state.koszyk):
-        st.write(f"{i+1}. {z['art']} | {z['ile']} pal. | do {z['deadline'].strftime('%d.%m')}")
+    st.subheader("📋 Twoja Lista:")
+    for i, z in enumerate(st.session_state.kolejka):
+        st.write(f"{i+1}. **{z['art']}** | {z['ile']} pal. | do {z['termin'].strftime('%d.%m')}")
 
-# GŁÓWNA SEKCJA
-if len(st.session_state.koszyk) > 0:
-    st.write("### 📅 Wygenerowany Plan")
+# --- GŁÓWNE OKNO (OBLICZENIA I WIDOK) ---
+if not st.session_state.kolejka:
+    st.info("Dodaj pierwsze zamówienie po lewej stronie, aby robot mógł przygotować rozpiskę.")
+else:
+    st.subheader("📅 Harmonogram Pracy (6:00 - 22:00)")
     
+    # Parametry robota
     dni_planu = {}
-    czas_dniowki = 840  # 14h
+    czas_zmian = 840  # 14h pracy dziennie (2 zmiany po 7h netto)
     aktualna_data = datetime.date.today()
-    wolny_czas = czas_dniowki
+    wolny_czas_dzis = czas_zmian
     
-    # Kopiujemy dane do obliczeń
-    robocza_lista = [dict(x) for x in st.session_state.koszyk]
+    # Kopia kolejki do przeliczenia
+    do_zrobienia = [dict(z) for z in st.session_state.kolejka]
     
-    while robocza_lista:
+    while do_zrobienia:
         d_key = aktualna_data.strftime("%Y-%m-%d")
         if d_key not in dni_planu:
-            dni_planu[d_key] = {"data": aktualna_data, "produkcje": []}
+            dni_planu[d_key] = {"data": aktualna_data, "zadania": []}
+            
+        zadanie = do_zrobienia[0]
+        czas_jednej = wydajnosc[zadanie["art"]]
         
-        z = robocza_lista[0]
-        wyd = wydajnosc[z["art"]]
+        # Ile palet wejdzie jeszcze dzisiaj?
+        mozliwe_dzis = wolny_czas_dzis // czas_jednej
+        ile_faktycznie = min(mozliwe_dzis, zadanie["ile"])
         
-        max_palet = wolny_czas // wyd
-        ile_robimy = min(max_palet, z["ile"])
-        
-        if ile_robimy > 0:
-            dni_planu[d_key]["produkcje"].append({
-                "art": z["art"],
-                "ile": int(ile_robimy),
-                "spoznione": aktualna_data > z["deadline"]
+        if ile_faktycznie > 0:
+            spoznione = aktualna_data > zadanie["termin"]
+            dni_planu[d_key]["zadania"].append({
+                "art": zadanie["art"],
+                "ile": int(ile_faktycznie),
+                "alert": spoznione
             })
-            z["ile"] -= ile_robimy
-            wolny_czas -= (ile_robimy * wyd)
-        
-        if z["ile"] <= 0:
-            robocza_lista.pop(0)
-        
-        # Przejście na następny dzień
-        if wolny_czas < 52 or (not robocza_lista and ile_robimy == 0):
+            zadanie["ile"] -= ile_faktycznie
+            wolny_czas_dzis -= (ile_faktycznie * czas_jednej)
+            
+        # Jeśli skończyliśmy to zamówienie, bierzemy następne z kolejki
+        if zadanie["ile"] <= 0:
+            do_zrobienia.pop(0)
+            
+        # Jeśli dzień się skończył (lub nie wejdzie już żadna paleta) - następny dzień
+        if wolny_czas_dzis < 52 or (not do_zrobienia and ile_faktycznie == 0):
             aktualna_data += datetime.timedelta(days=1)
-            wolny_czas = czas_dniowki
-        
-        if len(dni_planu) > 50: break
+            wolny_czas_dzis = czas_zmian
+            
+        if len(dni_planu) > 40: break # Zabezpieczenie przed pętlą
 
-    # WYŚWIETLANIE KAFELKÓW
-    kolumny = st.columns(5)
-    for i, d_key in enumerate(sorted(dni_planu.keys())):
-        dane = dni_planu[d_key]
-        with kolumny[i % 5]:
-            # Kolor nagłówka - czerwony jeśli spóźnione
-            jest_brak = any(p["spoznione"] for p in dane["produkcje"])
-            kolor = "#FF4B4B" if jest_brak else "#FFE600"
-            
-            st.markdown(f"""
-                <div style="border:1px solid #ddd; border-radius:10px; padding:10px; margin-bottom:10px; background-color:white;">
-                    <div style="background-color:{kolor}; padding:5px; border-radius:5px; text-align:center; font-weight:bold; color:black;">
-                        {dane['data'].strftime('%d.%m %A')}
-                    </div>
-                    <div style="padding-top:10px;">
-            """, unsafe_allow_html=True)
-            
-            for p in dane["produkcje"]:
-                alert = " ⚠️" if p["spoznione"] else ""
-                st.write(f"**{p['art']}**: {p['ile']} pal.{alert}")
-            
-            st.markdown("</div></div>", unsafe_allow_html=True)
-
-else:
-    st.info("Dodaj zamówienia w panelu bocznym po lewej, aby zobaczyć plan.")
+    # Wyświetlanie kafelków (5 w rzędzie)
+    dni_posortowane = sorted(dni_planu.keys())
+    for i in range(0, len(dni_posortowane), 5):
+        cols = st.columns(5)
+        for j in range(5):
+            if i + j < len(dni_posortowane):
+                data_iso = dni_posortowane[i+j]
+                dzien = dni_planu[data_iso]
+                with cols[j]:
+                    # Czerwony nagłówek jeśli spóźnienie
+                    ma_alert = any(z["alert"] for z in dzien["zadania"])
+                    kolor = "#FF4B4B" if ma_alert else "#FFE600"
+                    
+                    st.markdown(f"""
+                        <div style="border:2px solid #ddd; border-radius:10px; padding:10px; background-color:white; min-height:150px;">
+                            <div style="background-color:{kolor}; color:black; text-align:center; font-weight:bold; border-radius:5px;">
+                                {dzien['data'].strftime('%d.%m %A')}
+                            </div>
+                            <div style="margin-top:10px;">
+                    """, unsafe_allow_html=True)
+                    
+                    for z in dzien["zadania"]:
+                        wykrzyknik = " ⚠️" if z["alert"] else ""
+                        st.write(f"**{z['art']}**: {z['ile']} pal.{wykrzyknik}")
+                        
+                    st.markdown("</div></div>", unsafe_allow_html=True)
