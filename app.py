@@ -19,7 +19,7 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista JIT - CZ/SK", layout="wide")
+st.set_page_config(page_title="Planista JIT - Raporty Osobne", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
@@ -119,12 +119,11 @@ with st.sidebar:
                 st.cache_data.clear()
                 st.rerun()
 
-            with st.expander("Szczegóły i Kraj"):
+            with st.expander("Szczegóły"):
                 for i, item in enumerate(st.session_state.kolejka):
                     if item['termin'] == data:
                         st.write(f"--- Art: {item['art']} ---")
-                        # Wybór kraju w edycji
-                        n_kraj = st.selectbox("Kierunek:", ["Czechy", "Słowacja"], 
+                        n_kraj = st.selectbox("Kraj:", ["Czechy", "Słowacja"], 
                                              index=0 if item.get('kraj') == "Czechy" else 1,
                                              key=f"kraj_e_{i}")
                         n_ile = st.number_input("Palety:", value=int(item['ile']), key=f"ile_e_{i}")
@@ -135,15 +134,14 @@ with st.sidebar:
                             st.cache_data.clear()
                             if st.button("Zapisz", key=f"btn_e_{i}"): st.rerun()
 
-# --- FORMULARZ DODAWANIA ---
+# --- FORMULARZ ---
 if st.session_state.get('pokaz_okno'):
     with st.container():
-        st.markdown("### 📝 Nowe zamówienie")
-        c_top1, c_top2 = st.columns(2)
-        kraj_nowy = c_top1.selectbox("Kierunek wysyłki:", ["Czechy", "Słowacja"])
-        dt_wys = c_top2.date_input("Data wysyłki:", datetime.date.today() + datetime.timedelta(days=3))
+        st.markdown("### 📝 Dodaj zamówienie")
+        c1, c2 = st.columns(2)
+        kraj_nowy = c1.selectbox("Kierunek:", ["Czechy", "Słowacja"])
+        dt_wys = c2.date_input("Wysyłka:", datetime.date.today() + datetime.timedelta(days=3))
         
-        st.write("Wpisz ilości palet:")
         c = st.columns(2)
         pobrane = []
         for i, art_id in enumerate(WYDAJNOSC.keys()):
@@ -151,14 +149,14 @@ if st.session_state.get('pokaz_okno'):
                 val = st.number_input(f"Art {art_id}", min_value=0, key=f"n_{art_id}")
                 if val > 0: pobrane.append({"art": art_id, "ile": val})
         
-        if st.button("ZATWIERDŹ I DODAJ"):
+        if st.button("ZATWIERDŹ"):
             for p in pobrane:
                 st.session_state.kolejka.append({"art": p["art"], "ile": p["ile"], "termin": dt_wys, "kraj": kraj_nowy})
             st.session_state.pokaz_okno = False
             st.rerun()
 
 # --- WIDOK GŁÓWNY ---
-st.title("🥛 Planista JIT - CZ/SK")
+st.title("🥛 Planista Produkcji JIT")
 
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
@@ -175,27 +173,45 @@ if st.session_state.kolejka:
                 <b style="color:#1f77b4;">{dk}</b> ({info['dzien']})<br>
                 <b>Suma: {info['suma']} pal.</b><hr style="margin:4px 0;">""", unsafe_allow_html=True)
             for p in info["p"]:
-                # KOLOROWANIE NA ZIELONO DLA SŁOWACJI
-                bg_color = "#d4edda" if p["Kraj"] == "Słowacja" else "transparent"
-                st.markdown(f"""<div style="background-color:{bg_color}; padding:2px 5px; border-radius:4px;">
-                    <b>{p['Artykuł']}</b>: {p['Palety']} pal. <br>
-                    <small>({p['Kraj']})</small>
+                bg = "#d4edda" if p["Kraj"] == "Słowacja" else "transparent"
+                st.markdown(f"""<div style="background-color:{bg}; padding:2px 5px; border-radius:4px; margin-bottom:2px;">
+                    <b>{p['Artykuł']}</b>: {p['Palety']} pal. <br><small>({p['Kraj']})</small>
                 </div>""", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # 2. WYSYŁKI
+    # 2. PODSUMOWANIE MIESIĘCZNE ODDZIELNIE
     st.divider()
-    st.subheader("🚚 Podsumowanie Wysyłek")
+    st.subheader("📊 Podsumowanie Asortymentu (Miesięcznie)")
+    df_full["Miesiąc"] = df_full["Miesiac"].map(MIESIACE_PL)
+
+    col_cz, col_sk = st.columns(2)
+    
+    with col_cz:
+        st.markdown("#### 🇨🇿 CZECHY")
+        df_cz = df_full[df_full["Kraj"] == "Czechy"]
+        if not df_cz.empty:
+            pivot_cz = df_cz.pivot_table(index="Artykuł", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0)
+            st.dataframe(pivot_cz, use_container_width=True)
+        else:
+            st.write("Brak zamówień na Czechy.")
+
+    with col_sk:
+        st.markdown("#### 🇸🇰 SŁOWACJA")
+        df_sk = df_full[df_full["Kraj"] == "Słowacja"]
+        if not df_sk.empty:
+            pivot_sk = df_sk.pivot_table(index="Artykuł", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0)
+            # Stylowanie tabeli na zielono, żeby pasowała do harmonogramu
+            st.dataframe(pivot_sk, use_container_width=True)
+        else:
+            st.write("Brak zamówień na Słowację.")
+
+    # 3. WYSYŁKI
+    st.divider()
+    st.subheader("🚚 Szczegóły Wysyłek Dziennych")
     df_wys = df_full.groupby(["Data Wysyłki", "Kraj", "Artykuł"])["Palety"].sum().reset_index()
     for data in df_wys["Data Wysyłki"].unique():
         sum_d = df_wys[df_wys["Data Wysyłki"] == data]["Palety"].sum()
         with st.expander(f"📅 Wysyłka: {data} (Łącznie: {sum_d} pal.)"):
             st.table(df_wys[df_wys["Data Wysyłki"] == data][["Kraj", "Artykuł", "Palety"]])
-
-    # 3. MIESIĘCZNE
-    st.divider()
-    st.subheader("📊 Statystyki Miesięczne")
-    df_full["Miesiąc"] = df_full["Miesiac"].map(MIESIACE_PL)
-    st.dataframe(df_full.pivot_table(index=["Artykuł", "Kraj"], columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0), use_container_width=True)
 
 else: st.info("Brak zamówień.")
