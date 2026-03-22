@@ -9,9 +9,9 @@ wydajnosc = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista Mleczarnia v3", page_icon="🥛", layout="wide")
+st.set_page_config(page_title="Planista Mleczarnia", page_icon="🥛", layout="wide")
 
-# CSS dla wyglądu
+# CSS dla wyglądu raportu
 st.markdown("""
     <style>
     .day-card { border: 2px solid #e6e9ef; border-radius: 10px; padding: 10px; background-color: #ffffff; margin-bottom: 10px; min-height: 150px; }
@@ -24,30 +24,39 @@ st.markdown("""
 
 st.title("🥛 Harmonogram Produkcji")
 
-# Inicjalizacja listy zamówień w pamięci przeglądarki
-if 'lista_zamowien' not in st.session_state:
-    st.session_state.lista_zamowien = []
+# Inicjalizacja listy w sesji
+if 'lista' not in st.session_state:
+    st.session_state.lista = []
 
 # PANEL BOCZNY
 with st.sidebar:
-    st.header("➕ Dodaj nowe zamówienie")
-    with st.form("form_dodawania", clear_on_submit=True):
-        art = st.selectbox("Artykuł:", list(wydajnosc.keys()))
-        ile = st.number_input("Ilość palet:", min_value=1, step=1)
-        termin = st.date_input("Termin (do kiedy):", datetime.date.today() + datetime.timedelta(days=2))
-        submit_button = st.form_submit_button("Dodaj do listy")
+    st.header("➕ Nowe zamówienie")
+    with st.form("dodaj_form"):
+        wybrany_art = st.selectbox("Artykuł:", list(wydajnosc.keys()))
+        ile_palet = st.number_input("Ilość palet:", min_value=1, step=1)
+        data_deadline = st.date_input("Termin:", datetime.date.today() + datetime.timedelta(days=2))
+        klik = st.form_submit_button("Dodaj do listy")
         
-        if submit_button:
-            st.session_state.lista_zamowien.append({
-                "art": art,
-                "ile": ile,
-                "termin": termin
+        if klik:
+            st.session_state.lista.append({
+                "art": wybrany_art,
+                "ile": ile_palet,
+                "deadline": data_deadline
             })
 
     if st.button("🗑️ Wyczyść wszystko"):
-        st.session_state.lista_zamowien = []
+        st.session_state.lista = []
         st.rerun()
 
     st.write("---")
-    st.write("**Twoja lista:**")
-    for i, z in enumerate(st.session_state.lista
+    st.write("**Aktualna lista:**")
+    for z in st.session_state.lista:
+        st.write(f"• {z['art']}: {z['ile']} pal. (do {z['deadline'].strftime('%d.%m')})")
+
+# GŁÓWNA SEKCJA
+if st.session_state.lista:
+    if st.button("🚀 GENERUJ HARMONOGRAM", type="primary", use_container_width=True):
+        dni_planu = {}
+        czas_dniowki = 840  # 14h
+        aktualna_data = datetime.date.today()
+        wolny_czas = czas_dni
