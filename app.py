@@ -2,7 +2,7 @@ import streamlit as st
 import datetime
 import pandas as pd
 
-# 1. Konfiguracja i dane stałe
+# 1. Dane stałe i tłumaczenia
 DNI_PL = {
     "Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa",
     "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
@@ -19,12 +19,12 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista JIT z Edycją", layout="wide")
+st.set_page_config(page_title="Planista JIT", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- LOGIKA JIT ---
+# --- LOGIKA OBLICZEŃ JIT ---
 @st.cache_data
 def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
     if not kolejka_tuple:
@@ -43,7 +43,6 @@ def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
         
         wyd = WYDAJNOSC.get(z["art"], 70)
         dzien_planowania = z['termin'] - datetime.timedelta(days=1)
-        
         if dzien_planowania < data_dzisiejsza:
             dzien_planowania = data_dzisiejsza
 
@@ -92,9 +91,9 @@ def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
     
     return dni_wyswietl, raport_lista
 
-# --- BOCZNY PANEL ---
+# --- PANEL BOCZNY (ZARZĄDZANIE I EDYCJA) ---
 with st.sidebar:
-    st.header("⚙️ Zarządzanie Planem")
+    st.header("⚙️ Zarządzanie")
     if st.button("➕ DODAJ NOWE ZAMÓWIENIE", type="primary", use_container_width=True):
         st.session_state.pokaz_okno = True
     
@@ -105,53 +104,50 @@ with st.sidebar:
 
     st.divider()
     
-    # --- SEKCE EDYCJI ---
     if st.session_state.kolejka:
-        st.subheader("✏️ Edytuj rozpisane wysyłki")
-        
-        # Grupowanie kolejki po datach wysyłki dla łatwiejszej edycji
+        st.subheader("✏️ Edycja / Usuwanie")
         daty_wysylki = sorted(list(set([z['termin'] for z in st.session_state.kolejka])))
         
         for data in daty_wysylki:
-            with st.expander(f"📅 Wysyłka: {data.strftime('%d.%m')}"):
+            # Nagłówek z przyciskiem kasowania obok
+            col_label, col_bin = st.columns([4, 1])
+            col_label.markdown(f"📅 **Wysyłka {data.strftime('%d.%m')}**")
+            
+            # PRZYCISK KASOWANIA CAŁEGO DNIA
+            if col_bin.button("🗑️", key=f"bin_{data}"):
+                st.session_state.kolejka = [z for z in st.session_state.kolejka if z['termin'] != data]
+                st.cache_data.clear()
+                st.rerun()
+
+            # Pole edycji wewnątrz expandera
+            with st.expander("Zmień ilości"):
                 for i, item in enumerate(st.session_state.kolejka):
                     if item['termin'] == data:
-                        # Klucz unikalny dla każdego inputa
-                        nowa_ilosc = st.number_input(
-                            f"Art {item['art']}", 
-                            min_value=0, 
-                            value=int(item['ile']), 
-                            key=f"edit_{i}_{item['art']}"
-                        )
-                        if nowa_ilosc != item['ile']:
-                            st.session_state.kolejka[i]['ile'] = nowa_ilosc
-                            st.cache_data.clear() # Czyścimy cache, żeby przeliczyć plan
-                            if st.button("Zapisz zmiany", key=f"save_{i}"):
-                                st.rerun()
-                
-                if st.button(f"Usuń tę datę ({data.strftime('%d.%m')})", key=f"del_date_{data}"):
-                    st.session_state.kolejka = [z for z in st.session_state.kolejka if z['termin'] != data]
-                    st.rerun()
+                        new_val = st.number_input(f"Art {item['art']}", value=int(item['ile']), key=f"e_{i}_{data}")
+                        if new_val != item['ile']:
+                            st.session_state.kolejka[i]['ile'] = new_val
+                            st.cache_data.clear()
+                            if st.button("Zapisz", key=f"s_{i}"): st.rerun()
 
-# --- FORMULARZ DODAWANIA ---
+# --- FORMULARZ ---
 if st.session_state.get('pokaz_okno'):
     with st.container():
-        st.markdown("### 📝 Nowe zamówienie")
+        st.markdown("### 📝 Formularz")
         c = st.columns(2)
         pobrane = []
         for i, art_id in enumerate(WYDAJNOSC.keys()):
             with c[i % 2]:
-                val = st.number_input(f"Art {art_id}", min_value=0, step=1, key=f"new_{art_id}")
+                val = st.number_input(f"Art {art_id}", min_value=0, key=f"n_{art_id}")
                 if val > 0: pobrane.append({"art": art_id, "ile": val})
-        dt_wys = st.date_input("Data wysyłki:", datetime.date.today() + datetime.timedelta(days=3))
-        if st.button("ZATWIERDŹ I DODAJ DO PLANU"):
+        dt_wys = st.date_input("Wysyłka:", datetime.date.today() + datetime.timedelta(days=3))
+        if st.button("DODAJ DO PLANU"):
             for p in pobrane:
                 st.session_state.kolejka.append({"art": p["art"], "ile": p["ile"], "termin": dt_wys})
             st.session_state.pokaz_okno = False
             st.rerun()
 
 # --- WIDOK GŁÓWNY ---
-st.title("🥛 Inteligentny Planista Produkcji JIT")
+st.title("🥛 Planista Produkcji JIT")
 
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
@@ -159,35 +155,31 @@ if st.session_state.kolejka:
     df_full = pd.DataFrame(raport_surowy)
 
     # 1. HARMONOGRAM
-    st.subheader("🗓️ Harmonogram Produkcji (Co robić danego dnia)")
+    st.subheader("🗓️ Kiedy robić?")
     siatka = st.columns(5)
-    for i, d_key in enumerate(sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
+    for i, dk in enumerate(sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
         with siatka[i % 5]:
-            info = dni[d_key]
-            st.markdown(f"""
-                <div style="border:1px solid #ddd; border-radius:10px; padding:8px; background-color:#fff;">
-                    <b style="color:#1f77b4; font-size:16px;">{d_key} ({info['dzien']})</b><br>
-                    <span style="color:#28a745; font-weight:bold;">Suma: {info['suma']} pal.</span><hr style="margin:4px 0;">
-            """, unsafe_allow_html=True)
-            for p in info["p"]:
-                st.write(f"**{p['Artykuł']}**: {p['Palety']} pal.")
+            info = dni[dk]
+            st.markdown(f"""<div style="border:1px solid #ddd; border-radius:10px; padding:8px; background-color:#fff;">
+                <b style="color:#1f77b4;">{dk}</b><br><small>{info['dzien']}</small><br>
+                <b style="color:green;">Suma: {info['suma']} pal.</b><hr style="margin:4px 0;">""", unsafe_allow_html=True)
+            for p in info["p"]: st.write(f"**{p['Artykuł']}**: {p['Palety']} pal.")
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # 2. PODSUMOWANIE WYSYŁEK
+    # 2. WYSYŁKI
     st.divider()
-    st.subheader("🚚 Szczegóły Wysyłek (Sprawdzenie zamówień)")
-    df_wysylki_szczegol = df_full.groupby(["Data Wysyłki", "Artykuł"])["Palety"].sum().reset_index()
-    for data in df_wysylki_szczegol["Data Wysyłki"].unique():
-        suma_dnia = df_wysylki_szczegol[df_wysylki_szczegol["Data Wysyłki"] == data]["Palety"].sum()
-        with st.expander(f"📅 Wysyłka: {data} — Łącznie: {suma_dnia} palet", expanded=True):
-            st.table(df_wysylki_szczegol[df_wysylki_szczegol["Data Wysyłki"] == data][["Artykuł", "Palety"]])
+    st.subheader("🚚 Co wyjeżdża?")
+    df_wys = df_full.groupby(["Data Wysyłki", "Artykuł"])["Palety"].sum().reset_index()
+    for data in df_wys["Data Wysyłki"].unique():
+        sum_d = df_wys[df_wys["Data Wysyłki"] == data]["Palety"].sum()
+        with st.expander(f"📅 Wysyłka: {data} (Łącznie: {sum_d} pal.)"):
+            st.table(df_wys[df_wys["Data Wysyłki"] == data][["Artykuł", "Palety"]])
 
     # 3. MIESIĘCZNE
     st.divider()
-    st.subheader("📊 Statystyki Miesięczne")
+    st.subheader("📊 Podsumowanie miesiąca")
     df_full["Miesiąc"] = df_full["Miesiac"].map(MIESIACE_PL)
-    df_miesiac = df_full.pivot_table(index="Artykuł", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0)
-    st.dataframe(df_miesiac, use_container_width=True)
+    st.dataframe(df_full.pivot_table(index="Artykuł", columns="Miesiąc", values="Palety", aggfunc="sum", fill_value=0), use_container_width=True)
 
-else:
-    st.info("Brak danych. Skorzystaj z panelu bocznego, aby dodać zamówienia.")
+else: st.info("Dodaj zamówienie w panelu bocznym.")
+                        "data_sort": data_dzisiejsza
