@@ -1,74 +1,53 @@
 import streamlit as st
 import datetime
+import pandas as pd
 
-# Baza wydajności
+# Baza wydajności (minuty na 1 paletę)
 wydajnosc = {
     "232": 70, "233": 60, "246": 70, "261": 84,
     "236": 84, "254": 52.5, "1221217": 120,
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista", layout="wide")
-st.title("🥛 Planista Produkcji - Reset")
+st.set_page_config(page_title="Planista Produkcji", layout="wide")
+st.title("🥛 Harmonogram Produkcji z Terminarzem")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# PANEL BOCZNY
+# --- PANEL BOCZNY: FORMULARZ ---
 with st.sidebar:
-    st.header("➕ Dodaj")
-    art = st.selectbox("Artykuł:", list(wydajnosc.keys()))
-    ile = st.number_input("Ile palet:", min_value=1, value=10)
-    d_start = st.date_input("Start:", datetime.date.today())
-    d_koniec = st.date_input("Termin:", datetime.date.today() + datetime.timedelta(days=3))
-    
-    if st.button("DODAJ"):
-        st.session_state.kolejka.append({"art": art, "ile": ile, "start": d_start, "termin": d_koniec})
-        st.rerun()
+    st.header("📋 Nowe Zamówienie")
+    with st.form("form_zbiorczy"):
+        dane_wejsciowe = []
+        for art_id in wydajnosc.keys():
+            c1, c2 = st.columns([1, 1.5])
+            with c1:
+                ile = st.number_input(f"Art {art_id}", min_value=0, step=1, value=0, key=f"n_{art_id}")
+            with c2:
+                termin = st.date_input(f"Termin", datetime.date.today() + datetime.timedelta(days=3), key=f"t_{art_id}")
+            
+            if ile > 0:
+                dane_wejsciowe.append({"art": art_id, "ile": ile, "termin": termin})
+        
+        st.write("---")
+        data_startu = st.date_input("Od kiedy zacząć produkcję?", datetime.date.today())
+        submit = st.form_submit_button("✅ DODAJ DO PLANU")
+        
+        if submit and dane_wejsciowe:
+            for poz in dane_wejsciowe:
+                st.session_state.kolejka.append({
+                    "art": poz["art"], "ile": poz["ile"], 
+                    "start": data_startu, "termin": poz["termin"]
+                })
+            st.rerun()
 
-    if st.button("WYCZYŚĆ"):
+    if st.button("🗑️ WYCZYŚĆ PLAN"):
         st.session_state.kolejka = []
         st.rerun()
 
-# OBLICZENIA I WIDOK
+# --- LOGIKA PLANOWANIA ---
 if not st.session_state.kolejka:
-    st.info("Dodaj zamówienie po lewej.")
+    st.info("👈 Wpisz ilości palet i daty dostaw w panelu bocznym.")
 else:
-    # Sortowanie i prosta logika
-    zadania = sorted([dict(z) for z in st.session_state.kolejka], key=lambda x: x['start'])
-    aktualna_data = min(z["start"] for z in zadania)
-    wolny_czas = 840
-    dni_planu = {}
-
-    while zadania:
-        d_key = aktualna_data.strftime("%Y-%m-%d")
-        if d_key not in dni_planu:
-            dni_planu[d_key] = {"data": aktualna_data, "p": []}
-        
-        dostepne = [z for z in zadania if z["start"] <= aktualna_data]
-        if not dostepne:
-            aktualna_data = min(z["start"] for z in zadania)
-            continue
-            
-        z = dostepne[0]
-        wyd = wydajnosc.get(z["art"], 70)
-        ile_dzis = min(wolny_czas // wyd, z["ile"])
-        
-        if ile_dzis > 0:
-            dni_planu[d_key]["p"].append({"art": z["art"], "ile": int(ile_dzis)})
-            z["ile"] -= ile_dzis
-            wolny_czas -= (ile_dzis * wyd)
-        
-        if z["ile"] <= 0: zadania.remove(z)
-        if wolny_czas < 52 or not dostepne:
-            aktualna_data += datetime.timedelta(days=1)
-            wolny_czas = 840
-        if len(dni_planu) > 50: break
-
-    # Rysowanie kafelków
-    cols = st.columns(4)
-    for i, dk in enumerate(sorted(dni_planu.keys())):
-        with cols[i % 4]:
-            st.warning(f"**{dni_planu[dk]['data'].strftime('%d.%m %A')}**")
-            for p in dni_planu[dk]["p"]:
-                st.write(f"{p['art']}: {p['ile']} pal.")
+    zad
