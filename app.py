@@ -8,109 +8,120 @@ wydajnosc = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista Produkcji", layout="wide")
+st.set_page_config(page_title="Planista Mleczarnia", layout="wide")
 
-st.title("🥛 System Kolejkowania Zamówień")
+# CSS dla tabeli i kafelków
+st.markdown("""
+    <style>
+    .day-box { border: 2px solid #eee; border-radius: 8px; padding: 10px; margin: 5px; background: white; min-height: 180px; }
+    .header-yellow { background: #ffe600; padding: 5px; text-align: center; font-weight: bold; border-radius: 4px; color: black; margin-bottom: 8px; }
+    .header-red { background: #ff4b4b; padding: 5px; text-align: center; font-weight: bold; border-radius: 4px; color: white; margin-bottom: 8px; }
+    .item-row { border-bottom: 1px solid #f0f0f0; padding: 2px 0; font-size: 14px; }
+    </style>
+""", unsafe_allow_html=True)
 
-# Inicjalizacja listy zamówień
+st.title("🥛 System Planowania Produkcji")
+
+# Inicjalizacja kolejki
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- PANEL BOCZNY (WPROWADZANIE) ---
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("🛒 Nowe Zamówienie")
-    art = st.selectbox("Wybierz artykuł:", list(wydajnosc.keys()))
-    ile = st.number_input("Ile palet:", min_value=1, step=1, value=5)
-    termin = st.date_input("Termin (Deadline):", datetime.date.today() + datetime.timedelta(days=2))
+    st.header("➕ Dodaj Artykuł")
+    art = st.selectbox("Artykuł:", list(wydajnosc.keys()))
+    ile = st.number_input("Liczba palet:", min_value=1, step=1, value=10)
+    termin = st.date_input("Termin (Deadline):", datetime.date.today() + datetime.timedelta(days=3))
     
-    if st.button("➕ DODAJ DO KOLEJKI"):
-        st.session_state.kolejka.append({
-            "art": art,
-            "ile": ile,
-            "termin": termin
-        })
+    if st.button("DODAJ DO PLANU"):
+        st.session_state.kolejka.append({"art": art, "ile": ile, "termin": termin})
         st.rerun()
 
-    if st.button("🗑️ WYCZYŚĆ WSZYSTKO"):
+    if st.button("WYCZYŚĆ WSZYSTKO"):
         st.session_state.kolejka = []
         st.rerun()
 
     st.write("---")
-    st.subheader("📋 Twoja Lista:")
+    st.subheader("📋 Lista zamówień:")
     for i, z in enumerate(st.session_state.kolejka):
-        st.write(f"{i+1}. **{z['art']}** | {z['ile']} pal. | do {z['termin'].strftime('%d.%m')}")
+        st.write(f"{i+1}. {z['art']} | {z['ile']} pal. | do {z['termin'].strftime('%d.%m')}")
 
-# --- GŁÓWNE OKNO (OBLICZENIA I WIDOK) ---
+# --- GŁÓWNY PANEL ---
 if not st.session_state.kolejka:
-    st.info("Dodaj pierwsze zamówienie po lewej stronie, aby robot mógł przygotować rozpiskę.")
+    st.info("Dodaj artykuły w panelu bocznym, aby wygenerować harmonogram.")
 else:
-    st.subheader("📅 Harmonogram Pracy (6:00 - 22:00)")
-    
-    # Parametry robota
+    # OBLICZENIA
     dni_planu = {}
-    czas_zmian = 840  # 14h pracy dziennie (2 zmiany po 7h netto)
+    limit_minut_dziennie = 840  # 14h (6-22)
     aktualna_data = datetime.date.today()
-    wolny_czas_dzis = czas_zmian
+    wolny_czas_dzis = limit_minut_dziennie
     
-    # Kopia kolejki do przeliczenia
-    do_zrobienia = [dict(z) for z in st.session_state.kolejka]
-    
-    while do_zrobienia:
+    # Tworzymy kopię roboczą zadań
+    zadania = []
+    for z in st.session_state.kolejka:
+        zadania.append({
+            "art": z["art"], 
+            "ile": z["ile"], 
+            "minuty": z["ile"] * wydajnosc[z["art"]],
+            "termin": z["termin"]
+        })
+
+    # Główna pętla rozdzielająca na dni
+    while zadania:
         d_key = aktualna_data.strftime("%Y-%m-%d")
         if d_key not in dni_planu:
-            dni_planu[d_key] = {"data": aktualna_data, "zadania": []}
-            
-        zadanie = do_zrobienia[0]
-        czas_jednej = wydajnosc[zadanie["art"]]
+            dni_planu[d_key] = {"data": aktualna_data, "pozycje": []}
+        
+        current_job = zadania[0]
+        czas_jednej = wydajnosc[current_job["art"]]
         
         # Ile palet wejdzie jeszcze dzisiaj?
-        mozliwe_dzis = wolny_czas_dzis // czas_jednej
-        ile_faktycznie = min(mozliwe_dzis, zadanie["ile"])
+        mozliwe_palety = wolny_czas_dzis // czas_jednej
         
-        if ile_faktycznie > 0:
-            spoznione = aktualna_data > zadanie["termin"]
-            dni_planu[d_key]["zadania"].append({
-                "art": zadanie["art"],
-                "ile": int(ile_faktycznie),
+        if mozliwe_palety > 0:
+            robimy_teraz = min(mozliwe_palety, current_job["ile"])
+            spoznione = aktualna_data > current_job["termin"]
+            
+            dni_planu[d_key]["pozycje"].append({
+                "art": current_job["art"],
+                "ile": int(robimy_teraz),
                 "alert": spoznione
             })
-            zadanie["ile"] -= ile_faktycznie
-            wolny_czas_dzis -= (ile_faktycznie * czas_jednej)
             
-        # Jeśli skończyliśmy to zamówienie, bierzemy następne z kolejki
-        if zadanie["ile"] <= 0:
-            do_zrobienia.pop(0)
+            current_job["ile"] -= robimy_teraz
+            wolny_czas_dzis -= (robimy_teraz * czas_jednej)
+        
+        # Jeśli artykuł skończony, usuń go z listy zadań
+        if current_job["ile"] <= 0:
+            zadania.pop(0)
             
-        # Jeśli dzień się skończył (lub nie wejdzie już żadna paleta) - następny dzień
-        if wolny_czas_dzis < 52 or (not do_zrobienia and ile_faktycznie == 0):
+        # Jeśli dzień pełny lub brak zadań, przeskocz do jutra
+        if wolny_czas_dzis < 52 or (not zadania and mozliwe_palety == 0):
             aktualna_data += datetime.timedelta(days=1)
-            wolny_czas_dzis = czas_zmian
-            
-        if len(dni_planu) > 40: break # Zabezpieczenie przed pętlą
+            wolny_czas_dzis = limit_minut_dziennie
+        
+        if len(dni_planu) > 100: break # Bezpiecznik
 
-    # Wyświetlanie kafelków (5 w rzędzie)
-    dni_posortowane = sorted(dni_planu.keys())
-    for i in range(0, len(dni_posortowane), 5):
-        cols = st.columns(5)
-        for j in range(5):
-            if i + j < len(dni_posortowane):
-                data_iso = dni_posortowane[i+j]
-                dzien = dni_planu[data_iso]
+    # RYSOWANIE
+    st.subheader("📅 Harmonogram Dzienny")
+    posortowane_daty = sorted(dni_planu.keys())
+    
+    # Wyświetlanie po 4 dni w rzędzie (lepiej wygląda na mniejszych ekranach)
+    for i in range(0, len(posortowane_daty), 4):
+        cols = st.columns(4)
+        for j in range(4):
+            if i + j < len(posortowane_daty):
+                data_iso = posortowane_daty[i+j]
+                dane = dni_planu[data_iso]
                 with cols[j]:
-                    # Czerwony nagłówek jeśli spóźnienie
-                    ma_alert = any(z["alert"] for z in dzien["zadania"])
-                    kolor = "#FF4B4B" if ma_alert else "#FFE600"
+                    ma_alert = any(p["alert"] for p in dane["pozycje"])
+                    klasa_naglowka = "header-red" if ma_alert else "header-yellow"
                     
-                    st.markdown(f"""
-                        <div style="border:2px solid #ddd; border-radius:10px; padding:10px; background-color:white; min-height:150px;">
-                            <div style="background-color:{kolor}; color:black; text-align:center; font-weight:bold; border-radius:5px;">
-                                {dzien['data'].strftime('%d.%m %A')}
-                            </div>
-                            <div style="margin-top:10px;">
-                    """, unsafe_allow_html=True)
+                    st.markdown(f'<div class="day-box">', unsafe_allow_html=True)
+                    st.markdown(f'<div class="{klasa_naglowka}">{dane["data"].strftime("%d.%m %A")}</div>', unsafe_allow_html=True)
                     
-                    for z in dzien["zadania"]:
-                        wykrzyknik = " ⚠️" if z["alert"] else ""
-                        st.write(f"**{z['art']}**: {z['ile']} pal.{wykrzyknik}")
-                        
-                    st.markdown("</div></div>", unsafe_allow_html=True)
+                    for p in dane["pozycje"]:
+                        wykrzyknik = " ⚠️" if p["alert"] else ""
+                        st.markdown(f'<div class="item-row"><b>{p["art"]}</b>: {p["ile"]} pal.{wykrzyknik}</div>', unsafe_allow_html=True)
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
