@@ -9,38 +9,30 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Szybki Planista", layout="wide")
-st.title("🥛 Harmonogram Produkcji (Wersja Turbo)")
+st.set_page_config(page_title="Planista Produkcji", layout="wide")
 
+# Inicjalizacja kolejki
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- PANEL BOCZNY ---
-with st.sidebar:
-    st.header("📋 Wprowadzanie")
-    with st.form("form_szybki", clear_on_submit=True):
-        cols_input = st.columns(2)
-        dane_form = []
+# --- FUNKCJA OKIENKA (DIALOG) ---
+@st.dialog("📦 Dodaj Nowe Zamówienie")
+def otworz_okno_zamowienia():
+    st.write("Wpisz ilości palet dla artykułów:")
+    
+    with st.container():
+        nowe_pozycje = []
+        cols = st.columns(2)
         for i, (art_id, czas) in enumerate(WYDAJNOSC.items()):
-            with cols_input[i % 2]:
-                n = st.number_input(f"Art {art_id}", min_value=0, step=1, value=0, key=f"input_{art_id}")
+            with cols[i % 2]:
+                n = st.number_input(f"Art {art_id}", min_value=0, step=1, value=0)
                 if n > 0:
-                    dane_form.append({"art": art_id, "ile": n})
+                    nowe_pozycje.append({"art": art_id, "ile": n})
         
         st.write("---")
-        d_start = st.date_input("Start planu:", datetime.date.today())
-        d_deadline = st.date_input("Termin (ogólny):", datetime.date.today() + datetime.timedelta(days=3))
+        d_start = st.date_input("Kiedy zacząć produkcję?", datetime.date.today())
+        d_deadline = st.date_input("Termin dostawy (Deadline):", datetime.date.today() + datetime.timedelta(days=3))
         
-        if st.form_submit_button("🚀 GENERUJ / DODAJ"):
-            for poz in dane_form:
-                st.session_state.kolejka.append({
-                    "art": poz["art"], "ile": poz["ile"], 
-                    "start": d_start, "termin": d_deadline
-                })
-            st.rerun()
-
-    if st.button("🗑️ WYCZYŚĆ WSZYSTKO"):
-        st.session_state.kolejka = []
-        st.rerun()
-
-# --- S
+        if st.button("ZATWIERDŹ I DODAJ DO PLANU", use_container_width=True):
+            if nowe_pozycje:
+                for p in nowe_po
