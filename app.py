@@ -2,10 +2,15 @@ import streamlit as st
 import datetime
 import pandas as pd
 
-# 1. Słownik tłumaczeń i baza wydajności
+# 1. Tłumaczenia i wydajność
 DNI_PL = {
     "Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa",
     "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
+}
+
+MIESIACE_PL = {
+    1: "Styczeń", 2: "Luty", 3: "Marzec", 4: "Kwiecień", 5: "Maj", 6: "Czerwiec",
+    7: "Lipiec", 8: "Sierpień", 9: "Wrzesień", 10: "Październik", 11: "Listopad", 12: "Grudzień"
 }
 
 WYDAJNOSC = {
@@ -14,19 +19,18 @@ WYDAJNOSC = {
     "1221070": 52.5, "1221181": 84
 }
 
-st.set_page_config(page_title="Planista JIT", layout="wide")
+st.set_page_config(page_title="Planista Produkcji JIT", layout="wide")
 
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = []
 
-# --- LOGIKA JIT (Just In Time) ---
+# --- LOGIKA JIT ---
 @st.cache_data
-def generuj_harmonogram_jit(kolejka_tuple, data_dzisiejsza):
+def generuj_dane_jit(kolejka_tuple, data_dzisiejsza):
     if not kolejka_tuple:
-        return {}, pd.DataFrame()
+        return {}, [], pd.DataFrame()
     
     zadania = [dict(z) for z in kolejka_tuple]
-    # Planujemy od najpóźniejszych terminów, żeby "dobić" do daty wysyłki
     zadania = sorted(zadania, key=lambda x: x['termin'], reverse=True)
     
     limit_minut = 840
@@ -36,7 +40,6 @@ def generuj_harmonogram_jit(kolejka_tuple, data_dzisiejsza):
     for z in zadania:
         ilosc_do_zrobienia = z['ile']
         wyd = WYDAJNOSC.get(z["art"], 70)
-        # Produkcja powinna kończyć się dzień przed wysyłką
         dzien_planowania = z['termin'] - datetime.timedelta(days=1)
         
         if dzien_planowania < data_dzisiejsza:
@@ -53,6 +56,8 @@ def generuj_harmonogram_jit(kolejka_tuple, data_dzisiejsza):
                 wyniki_produkcji.append({
                     "data_sort": dzien_planowania,
                     "Data Produkcji": dzien_planowania.strftime("%d.%m"),
+                    "Miesiac": dzien_planowania.month,
+                    "Rok": dzien_planowania.year,
                     "Dzień": DNI_PL.get(dzien_planowania.strftime("%A")),
                     "Artykuł": z["art"],
                     "Palety": int(ile_dzis),
@@ -67,6 +72,8 @@ def generuj_harmonogram_jit(kolejka_tuple, data_dzisiejsza):
                     wyniki_produkcji.append({
                         "data_sort": data_dzisiejsza,
                         "Data Produkcji": data_dzisiejsza.strftime("%d.%m"),
+                        "Miesiac": data_dzisiejsza.month,
+                        "Rok": data_dzisiejsza.year,
                         "Dzień": DNI_PL.get(data_dzisiejsza.strftime("%A")),
                         "Artykuł": z["art"],
                         "Palety": int(ilosc_do_zrobienia),
@@ -83,55 +90,30 @@ def generuj_harmonogram_jit(kolejka_tuple, data_dzisiejsza):
             dni_wyswietl[d_key] = {"dzien": r['Dzień'], "suma": 0, "p": []}
         dni_wyswietl[d_key]["p"].append(r)
         dni_wyswietl[d_key]["suma"] += r["Palety"]
-
-    # Tabela zbiorcza wysyłek (Art vs Data Wysyłki)
-    df_temp = pd.DataFrame(wyniki_produkcji)
-    # Usuwamy dopisek "PILNE" do tabeli zbiorczej, żeby daty się zgadzały
-    df_temp["Data Wysyłki Clean"] = df_temp["Data Wysyłki"].str.replace(" ⚠️ PILNE", "")
-    tabela_zbiorcza = df_temp.pivot_table(
-        index="Artykuł", 
-        columns="Data Wysyłki Clean", 
-        values="Palety", 
-        aggfunc="sum", 
-        fill_value=0,
-        margins=True, # Dodaje sumowanie końcowe
-        margins_name="SUMA"
-    )
     
-    return dni_wyswietl, tabela_zbiorcza
+    return dni_wyswietl, raport_lista
 
-# --- PASEK BOCZNY ---
+# --- BOCZNY PANEL ---
 with st.sidebar:
-    st.header("⚙️ Opcje")
+    st.header("⚙️ Zarządzanie")
     if st.button("➕ DODAJ ZAMÓWIENIE", type="primary", use_container_width=True):
         st.session_state.pokaz_okno = True
     
     st.divider()
-    st.subheader("📦 Kolejka w pamięci")
-    for i, item in enumerate(st.session_state.kolejka):
-        c_t, c_d = st.columns([4, 1])
-        c_t.write(f"**{item['art']}** ({item['ile']} pal.)\n→ {item['termin'].strftime('%d.%m')}")
-        if c_d.button("❌", key=f"del_{i}"):
-            st.session_state.kolejka.pop(i)
-            st.rerun()
-    
-    if st.button("🗑️ WYCZYŚĆ WSZYSTKO", use_container_width=True):
+    if st.button("🗑️ WYCZYŚĆ PLAN", use_container_width=True):
         st.session_state.kolejka = []
         st.rerun()
 
-# Okno wprowadzania danych
 if st.session_state.get('pokaz_okno'):
-    with st.expander("📝 Formularz zamówienia", expanded=True):
-        cols = st.columns(2)
+    with st.expander("📝 Formularz", expanded=True):
+        c = st.columns(2)
         pobrane = []
         for i, art_id in enumerate(WYDAJNOSC.keys()):
-            with cols[i % 2]:
-                val = st.number_input(f"Art {art_id}", min_value=0, step=1, key=f"v_{art_id}")
+            with c[i % 2]:
+                val = st.number_input(f"Art {art_id}", min_value=0, step=1)
                 if val > 0: pobrane.append({"art": art_id, "ile": val})
-        
-        dt_wys = st.date_input("Data wysyłki (Termin):", datetime.date.today() + datetime.timedelta(days=3))
-        
-        if st.button("ZATWIERDŹ"):
+        dt_wys = st.date_input("Wysyłka:", datetime.date.today() + datetime.timedelta(days=3))
+        if st.button("ZAPISZ"):
             for p in pobrane:
                 st.session_state.kolejka.append({"art": p["art"], "ile": p["ile"], "termin": dt_wys})
             st.session_state.pokaz_okno = False
@@ -142,30 +124,46 @@ st.title("🥛 Planista Produkcji JIT")
 
 if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
-    dni, zbiorcza = generuj_harmonogram_jit(k_tuple, datetime.date.today())
-    
-    # 1. HARMONOGRAM (Góra)
-    st.subheader("🗓️ Harmonogram Produkcji (Kiedy robić)")
+    dni, raport_surowy = generuj_dane_jit(k_tuple, datetime.date.today())
+    df_full = pd.DataFrame(raport_surowy)
+
+    # 1. HARMONOGRAM PRODUKCJI
+    st.subheader("🗓️ Harmonogram Produkcji")
     siatka = st.columns(5)
     for i, d_key in enumerate(sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
         with siatka[i % 5]:
             info = dni[d_key]
             st.markdown(f"""
-                <div style="border:1px solid #ddd; border-radius:10px; padding:10px; background-color:#ffffff; margin-bottom:10px;">
-                    <b style="color:#1f77b4; font-size:16px;">{d_key} ({info['dzien']})</b><br>
-                    <span style="color:#28a745; font-weight:bold;">Suma: {info['suma']} pal.</span><hr style="margin:5px 0;">
+                <div style="border:1px solid #ddd; border-radius:10px; padding:8px; background-color:#fff;">
+                    <b style="color:#1f77b4;">{d_key} ({info['dzien']})</b><br>
+                    <span style="color:#28a745; font-weight:bold;">Suma: {info['suma']} pal.</span><hr style="margin:4px 0;">
             """, unsafe_allow_html=True)
             for p in info["p"]:
                 st.write(f"**{p['Artykuł']}**: {p['Palety']} pal.")
-                st.caption(f"Cel wysyłki: {p['Data Wysyłki']}")
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # 2. PODSUMOWANIE WYSYŁEK (Dół)
+    # 2. PODSUMOWANIE WYSYŁEK (DZIENNE)
     st.divider()
-    st.subheader("📊 Podsumowanie Wysyłek (Ile palet na jaki dzień)")
-    st.write("Tabela pokazuje łączną ilość towaru, która musi wyjechać z zakładu w danych dniach.")
-    st.dataframe(zbiorcza, use_container_width=True)
+    st.subheader("🚚 Podsumowanie Wysyłek (Dziennie)")
+    df_wysylki = df_full.groupby("Data Wysyłki")["Palety"].sum().reset_index()
+    st.table(df_wysylki)
+
+    # 3. PODSUMOWANIE MIESIĘCZNE (ASORTYMENT)
+    st.divider()
+    st.subheader("📊 Produkcja Miesięczna (Suma wg artykułu)")
     
-    st.info("💡 Aby wydrukować harmonogram, użyj Ctrl+P i wybierz opcję 'Drukuj tylko wybraną treść' lub wydrukuj całą stronę.")
+    # Dodajemy czytelną nazwę miesiąca
+    df_full["Nazwa Miesiąca"] = df_full["Miesiac"].map(MIESIACE_PL)
+    
+    # Tworzymy tabelę przestawną: Artykuł vs Miesiąc
+    df_miesiac = df_full.pivot_table(
+        index="Artykuł",
+        columns="Nazwa Miesiąca",
+        values="Palety",
+        aggfunc="sum",
+        fill_value=0
+    )
+    st.dataframe(df_miesiac, use_container_width=True)
+
 else:
-    st.info("Dodaj pierwsze zamówienie, aby wygenerować plan.")
+    st.info("Dodaj zamówienie, aby zobaczyć plan.")
