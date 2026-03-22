@@ -149,3 +149,6 @@ if st.session_state.kolejka:
             st.markdown("</div>", unsafe_allow_html=True)
 else:
     st.info("Brak zamówień w systemie.")
+            st.markdown("</div>", unsafe_allow_html=True)
+else:
+    st.info("Brak zamówień w systemie.")
