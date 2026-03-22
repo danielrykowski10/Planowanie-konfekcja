@@ -1,5 +1,6 @@
 import streamlit as st
 import datetime
+import math
 
 # Baza wydajności (minuty na 1 paletę)
 wydajnosc = {
@@ -10,105 +11,121 @@ wydajnosc = {
 
 st.set_page_config(page_title="Harmonogram Mleczarnia", page_icon="🥛", layout="wide")
 
-# CSS dla ładnego wyglądu kafelków
 st.markdown("""
     <style>
     .day-card {
-        border: 2px solid #f0f2f6;
+        border: 2px solid #e6e9ef;
         border-radius: 10px;
         padding: 15px;
         background-color: #ffffff;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
-        height: 100%;
+        margin-bottom: 20px;
+        min-height: 200px;
     }
     .day-header {
         background-color: #ffe600;
         font-weight: bold;
         text-align: center;
-        padding: 5px;
+        padding: 8px;
         border-radius: 5px;
-        margin-bottom: 10px;
+        margin-bottom: 12px;
         color: black;
+        font-size: 1.1em;
     }
     .art-row {
         display: flex;
         justify-content: space-between;
-        border-bottom: 1px solid #eee;
-        padding: 3px 0;
+        border-bottom: 1px solid #f0f0f0;
+        padding: 5px 0;
+        font-family: monospace;
+    }
+    .luz-row {
+        color: #999;
+        font-size: 0.85em;
+        font-style: italic;
+        margin-top: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🥛 Harmonogram Porcjowania 2026")
+st.title("🥛 Harmonogram Porcjowania - Pełne Palety")
 
-# Sidebar - wprowadzanie danych
 with st.sidebar:
-    st.header("⚙️ Ustawienia")
-    data_startu = st.date_input("Data rozpoczęcia planu:", datetime.datetime.now())
+    st.header("⚙️ Parametry")
+    data_startu = st.date_input("Data startu:", datetime.datetime.now())
     st.write("---")
-    st.header("📦 Zamówienie")
+    st.header("📦 Zamówienie (ilość palet)")
     zamowienie_input = []
     for index in wydajnosc.keys():
-        ile = st.number_input(f"Art. {index} (palet)", min_value=0.0, step=1.0, value=0.0, key=f"in_{index}")
+        ile = st.number_input(f"Art. {index}", min_value=0, step=1, value=0)
         if ile > 0:
-            zamowienie_input.append({"idx": index, "ile": ile, "pozostalo_min": ile * wydajnosc[index]})
+            # Przeliczamy od razu na minuty całkowite
+            zamowienie_input.append({"idx": index, "ile_total": ile, "pozostalo_min": ile * wydajnosc[index]})
 
-# Generowanie planu
 if st.button("Generuj Harmonogram"):
     if not zamowienie_input:
-        st.warning("Wpisz ilości palet w panelu bocznym.")
+        st.warning("Proszę wpisać ilości palet w panelu bocznym.")
     else:
         dni_planu = {}
         czas_dniowki = 840  # 14h (6-22)
         
         aktualny_dzien = data_startu
         wolny_czas_dzis = czas_dniowki
-        
         zadanie_idx = 0
         
         while zadanie_idx < len(zamowienie_input):
             dzien_key = aktualny_dzien.strftime("%d.%m.%Y (%A)")
             if dzien_key not in dni_planu:
-                dni_planu[dzien_key] = []
+                dni_planu[dzien_key] = {"produkty": [], "wolny_czas": 0}
             
             zadanie = zamowienie_input[zadanie_idx]
-            czas_do_ulokowania = min(zadanie["pozostalo_min"], wolny_czas_dzis)
+            czas_jednej_palety = wydajnosc[zadanie["idx"]]
             
-            ile_palet = czas_do_ulokowania / wydajnosc[zadanie["idx"]]
+            # Ile PEŁNYCH palet zmieści się w pozostałym czasie dnia?
+            max_palet_dzis = wolny_czas_dzis // czas_jednej_palety
+            # Ile palet realnie potrzebujemy jeszcze zrobić z tego zamówienia?
+            potrzebne_palety = math.ceil(zadanie["pozostalo_min"] / czas_jednej_palety)
             
-            # Jeśli ten sam artykuł już jest w tym dniu, zsumuj go
-            if dni_planu[dzien_key] and dni_planu[dzien_key][-1]["art"] == zadanie["idx"]:
-                dni_planu[dzien_key][-1]["ilosc"] += ile_palet
-            else:
-                dni_planu[dzien_key].append({"art": zadanie["idx"], "ilosc": ile_palet})
+            ile_robimy_dzis = min(max_palet_dzis, potrzebne_palety)
             
-            zadanie["pozostalo_min"] -= czas_do_ulokowania
-            wolny_czas_dzis -= czas_do_ulokowania
+            if ile_robimy_dzis > 0:
+                czas_zuzyty = ile_robimy_dzis * czas_jednej_palety
+                
+                # Dodaj lub zsumuj w widoku dnia
+                found = False
+                for p in dni_planu[dzien_key]["produkty"]:
+                    if p["art"] == zadanie["idx"]:
+                        p["ilosc"] += ile_robimy_dzis
+                        found = True
+                        break
+                if not found:
+                    dni_planu[dzien_key]["produkty"].append({"art": zadanie["idx"], "ilosc": int(ile_robimy_dzis)})
+                
+                zadanie["pozostalo_min"] -= czas_zuzyty
+                wolny_czas_dzis -= czas_zuzyty
             
+            # Jeśli zadanie skończone lub nie wejdzie już ani jedna pełna paleta
             if zadanie["pozostalo_min"] <= 0:
                 zadanie_idx += 1
             
-            if wolny_czas_dzis <= 0 or zadanie_idx >= len(zamowienie_input):
+            # Jeśli dzień pełny lub brak zadań, przejdź do następnego
+            if wolny_czas_dzis < min([wydajnosc[z["idx"]] for z in zamowienie_input[zadanie_idx:]] or [9999]):
+                dni_planu[dzien_key]["wolny_czas"] = wolny_czas_dzis
                 aktualny_dzien += datetime.timedelta(days=1)
                 wolny_czas_dzis = czas_dniowki
 
-        # Wyświetlanie siatki (grid) - 5 kolumn na wiersz (jak dni robocze)
+        # Wyświetlanie
         dni_list = list(dni_planu.keys())
         for i in range(0, len(dni_list), 5):
             cols = st.columns(5)
             for j in range(5):
                 if i + j < len(dni_list):
-                    dzien_str = dni_list[i + j]
+                    d_key = dni_list[i + j]
                     with cols[j]:
-                        st.markdown(f"""
-                            <div class="day-card">
-                                <div class="day-header">{dzien_str}</div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        for pozycja in dni_planu[dzien_str]:
-                            st.markdown(f"""
-                                <div class="art-row">
-                                    <span><b>{pozycja['art']}</b></span>
-                                    <span>{round(pozycja['ilosc'], 1)} pal.</span>
-                                </div>
-                            """, unsafe_allow_html=True)
+                        st.markdown(f'<div class="day-card"><div class="day-header">{d_key}</div>', unsafe_allow_html=True)
+                        for p in dni_planu[d_key]["produkty"]:
+                            st.markdown(f'<div class="art-row"><span><b>{p["art"]}</b></span><span>{p["ilosc"]} pal.</span></div>', unsafe_allow_html=True)
+                        
+                        luz = int(dni_planu[d_key]["wolny_czas"])
+                        if luz > 0:
+                            st.markdown(f'<div class="luz-row">Wolne: {luz} min</div>', unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
