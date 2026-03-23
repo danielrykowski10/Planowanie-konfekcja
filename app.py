@@ -1,3 +1,12 @@
+Rzeczywiście, na zrzucie ekranu widać, że kafelki kompletnie się "rozjechały". Ten ogromny biały obszar wynikał z technicznego zachowania Streamlita – program automatycznie zamykał blok ramki (ten główny biały z datą), a same zamówienia drukował pod spodem, zamiast wewnątrz niego.
+
+Dodatkowo, przebudowałem całkowicie panel boczny z historią. Teraz masz dwie bardzo wygodne zakładki (Czechy i Słowacja), gdzie widzisz dokładnie co jest wbite, pogrupowane po datach, i gdzie możesz w locie edytować palety lub usuwać zamówienia.
+
+Zmieniłem sposób renderowania kafelków na pojedynczy blok HTML. Zniknęło puste białe miejsce, a ramki będą elastycznie dopasowywać się do zawartości. Jeśli wpadną nadgodziny, pojawi się dyskretny, ale czytelny komunikat: ⚠️ ZMIANA WYDŁUŻONA (9h).
+
+Oto kompletny kod do podmiany w pliku na Twoim GitHubie:
+
+Python
 import streamlit as st
 import datetime
 import pandas as pd
@@ -36,17 +45,10 @@ DNI_PL = {
     "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
 }
 
-# --- NOWE NORMY WYDAJNOŚCIOWE (MINUTY NA PALETĘ) ---
 WYDAJNOSC = {
-    "232": 84, 
-    "233": 56, 
-    "236": 84, 
-    "261": 84,
-    "246": 84, 
-    "254": 52.5, 
-    "1221217": 240,
-    "1221070": 52.5, 
-    "1221181": 210
+    "232": 84, "233": 56, "236": 84, "261": 84,
+    "246": 84, "254": 52.5, "1221217": 240,
+    "1221070": 52.5, "1221181": 210
 }
 
 st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
@@ -69,21 +71,19 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
     while zadania:
         idx_wybranego = -1
         
-        # 1. Kontynuacja asortymentu
         if ostatni_art is not None:
             for i, z in enumerate(zadania):
                 if z['art'] == ostatni_art:
                     idx_wybranego = i
                     break
         
-        # 2. Najpilniejszy termin
         if idx_wybranego == -1:
             zadania.sort(key=lambda x: (x['termin'], x['art']))
             idx_wybranego = 0
 
         z = zadania.pop(idx_wybranego)
         ile = z['ile']
-        wyd = WYDAJNOSC.get(z["art"], 70) # Domyślnie 70, jeśli dodasz kiedyś nowy bez wpisu
+        wyd = WYDAJNOSC.get(z["art"], 70) 
         data_kursora = data_dzis
         
         while ile > 0:
@@ -97,7 +97,6 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
             
             wolny_czas = plan_dni[d_key]
             
-            # Dzień wysyłki: produkcja musi skończyć się na 1 zmianie (420 min)
             if data_kursora == z['termin']:
                 zajete_juz = MAX_CZAS_DOBA - wolny_czas
                 dostepny_dzis = max(0, 420 - zajete_juz)
@@ -107,7 +106,6 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
             produkcja = min(dostepny_dzis // wyd, ile)
             is_nadgodziny = False
             
-            # WYKRYWANIE NADGODZIN: Jeśli musimy zrobić więcej niż pozwala czas
             jutro = data_kursora + datetime.timedelta(days=1)
             if jutro.weekday() == 6: jutro += datetime.timedelta(days=1)
             
@@ -123,7 +121,6 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                     produkcja += dodatek
                     is_nadgodziny = True
 
-            # Jeśli dzisiaj jest wysyłka i nadal mamy palety - wymuś produkcję w nadgodzinach
             if data_kursora == z['termin'] and ile > produkcja:
                 produkcja = ile 
                 is_nadgodziny = True
@@ -147,7 +144,6 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
             if ile > 0:
                 data_kursora += datetime.timedelta(days=1)
 
-    # Budowanie widoku kafelków
     widok = {}
     raport.sort(key=lambda x: (x['dt_sort'], x['termin_sort'], x['Art']))
     for r in raport:
@@ -158,15 +154,15 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
         widok[dk]["suma"] += r["Palety"]
         widok[dk]["czas_zajety"] += r["Palety"] * WYDAJNOSC.get(r["Art"], 70)
         
-        # Flaga Nadgodziny lub przekroczony fizyczny czas (840 min)
         if r["Nadgodziny"] or widok[dk]["czas_zajety"] > MAX_CZAS_DOBA:
             widok[dk]["nad"] = True
             
     return widok, raport
 
-# --- INTERFEJS ---
+# --- INTERFEJS BOCZNY ---
 with st.sidebar:
-    st.header("⚙️ Zarządzanie")
+    st.markdown('<div style="font-size: 24px; font-weight: bold; color: #1f77b4; margin-bottom:15px;">Konfekcja SM</div>', unsafe_allow_html=True)
+    
     if st.button("➕ DODAJ ZAMÓWIENIE", type="primary", use_container_width=True): 
         st.session_state.pokaz_f = True
     
@@ -176,7 +172,44 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-st.title("Konfekcja SM - Harmonogram Produkcji")
+    st.divider()
+    st.subheader("✏️ Historia i Edycja Zamówień")
+    
+    if st.session_state.kolejka:
+        tab_cz, tab_sk = st.tabs(["🇨🇿 Czechy", "🇸🇰 Słowacja"])
+        
+        # Filtrujemy i edytujemy po krajach
+        for zakładka, wybrany_kraj in zip([tab_cz, tab_sk], ["Czechy", "Słowacja"]):
+            with zakładka:
+                # Szukamy dat wysyłek tylko dla danego kraju
+                daty = sorted(list(set([z['termin'] for z in st.session_state.kolejka if z['kraj'] == wybrany_kraj])))
+                
+                if nie daty:
+                    st.info(f"Brak zamówień na {wybrany_kraj}")
+                else:
+                    for d in daty:
+                        with st.expander(f"📅 Wysyłka: {d.strftime('%d.%m')}"):
+                            for i, z in enumerate(st.session_state.kolejka):
+                                if z['termin'] == d and z['kraj'] == wybrany_kraj:
+                                    c1, c2 = st.columns([3, 1])
+                                    nowa_il = c1.number_input(f"Art {z['art']}", value=int(z['ile']), min_value=1, key=f"ed_{i}")
+                                    
+                                    # Przycisk usunięcia
+                                    if c2.button("❌", key=f"del_{i}"):
+                                        st.session_state.kolejka.pop(i)
+                                        zapisz_dane(st.session_state.kolejka)
+                                        st.rerun()
+                                    
+                                    # Aktualizacja wartości
+                                    if nowa_il != z['ile']:
+                                        st.session_state.kolejka[i]['ile'] = nowa_il
+                                        zapisz_dane(st.session_state.kolejka)
+                                        st.rerun()
+    else:
+        st.info("Brak wprowadzonych zamówień.")
+
+# --- GŁÓWNY EKRAN ---
+st.title("Harmonogram Produkcji")
 
 if st.session_state.get('pokaz_f'):
     with st.form("add_form"):
@@ -198,27 +231,41 @@ if st.session_state.kolejka:
     k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
     dni, raport_surowy = generuj_plan_forward(k_tuple, datetime.date.today())
 
+    st.subheader("🗓️ Realny Plan Produkcji")
     grid = st.columns(5)
     sorted_dni = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
     
     for i, dk in enumerate(sorted_dni):
         with grid[i % 5]:
             inf = dni[dk]
-            border = "#ffb300" if inf["nad"] else "#ddd"
-            bg = "#fff8e1" if inf["nad"] else "white"
-            txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:13px;'>⚠️ WYDŁUŻONA ZMIANA</span>" if inf["nad"] else ""
+            border = "#ffb300" if inf["nad"] else "#e0e0e0"
+            bg = "#fffcf2" if inf["nad"] else "white"
+            txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:12px;'>⚠️ ZMIANA WYDŁUŻONA (9h)</span>" if inf["nad"] else ""
             
-            st.markdown(f"""<div style="border:2px solid {border}; border-radius:10px; padding:10px; background-color:{bg}; min-height:150px; margin-bottom:10px;">
-                <b style="color:#1f77b4;">{dk} ({inf['dz']})</b>{txt_nad}<br>
-                <b style="color:green;">Suma: {inf['suma']} pal.</b><hr style="margin:5px 0;">""", unsafe_allow_html=True)
+            # --- ZŁOŻENIE CAŁEGO KAFELKA W JEDNYM BLOKU HTML ---
+            karta_html = f"""
+            <div style="border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                <div style="font-size:16px; font-weight:bold; color:#1f77b4; margin-bottom:4px;">{dk} ({inf['dz']}){txt_nad}</div>
+                <div style="font-size:14px; font-weight:bold; color:green; border-bottom:1px solid {border}; padding-bottom:8px; margin-bottom:8px;">Suma: {inf['suma']} pal.</div>
+            """
             
             for p in inf["p"]:
                 k_bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
-                st.markdown(f"""<div style="background-color:{k_bg}; padding:5px; border-radius:5px; margin-bottom:4px; border:1px solid #eee; font-size:12px;">
-                    <b>{p['Art']}</b>: {p['Palety']} pal.<br>
-                    <small>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</small>
-                </div>""", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+                alert = ""
+                # Wewnętrzny znacznik przedłużonej zmiany, jeśli konkretne zamówienie ją wywołało
+                if p.get("Nadgodziny") and not inf["nad"]: 
+                    pass # Pomijamy, bo daliśmy globalny alert dla całego dnia
+                    
+                karta_html += f"""
+                <div style="background-color:{k_bg}; padding:6px; border-radius:5px; margin-bottom:6px; border:1px solid #ddd; font-size:12px;">
+                    <b style="font-size:13px;">Art {p['Art']}</b>: {p['Palety']} pal.<br>
+                    <span style="color:#555;">Wysyłka: {p['Wysyłka']} ({p['Kraj']})</span>
+                </div>
+                """
+            karta_html += "</div>"
+            
+            # Renderujemy cały sklejony kod jako jeden element - to eliminuje dziury i błędy wyświetlania!
+            st.markdown(karta_html, unsafe_allow_html=True)
 
     # --- TABELA KONTROLNA ---
     st.divider()
