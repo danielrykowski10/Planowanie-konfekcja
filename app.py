@@ -234,17 +234,26 @@ if st.session_state.kolejka:
             inf = dni[dk]
             border = "#ffb300" if inf["nad"] else "#e0e0e0"
             bg = "#fffcf2" if inf["nad"] else "white"
-            txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:12px;'>⚠️ ZMIANA WYDŁUŻONA (9h)</span>" if inf["nad"] else ""
+            txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:12px;'>⚠️ ZMIANA WYDŁUŻONA</span>" if inf["nad"] else ""
             
-            # --- OBLICZANIE ZMIAN NA PODSTAWIE CZASU ---
+            # --- OBLICZANIE ZMIAN I GODZIN PRACY ---
             if inf["czas_zajety"] <= 420:
-                tekst_zmiany = "⏱️ 1 zmiana (6-14)"
+                if inf["nad"]:
+                    tekst_zmiany = "⏱️ 1 zmiana (06:00 - 15:00)"
+                else:
+                    tekst_zmiany = "⏱️ 1 zmiana (06:00 - 14:00)"
             else:
-                tekst_zmiany = "⏱️ 2 zmiany (6-14, 14-22)"
+                if inf["nad"]:
+                    tekst_zmiany = "⏱️ 2 zmiany (06:00 - 15:00, 15:00 - 23:00)"
+                else:
+                    tekst_zmiany = "⏱️ 2 zmiany (06:00 - 14:00, 14:00 - 22:00)"
+            
+            # Kolor i stylizacja czcionki (jeśli nadgodziny -> pomarańczowy, jeśli norma -> ciemnoszary)
+            styl_zmiany = "color:#e65100; font-size:13px; font-weight:bold;" if inf["nad"] else "color:#444; font-size:13px; font-weight:bold;"
                 
             karta_html = f"<div style='border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
             karta_html += f"<div style='font-size:16px; font-weight:bold; color:#1f77b4; margin-bottom:4px;'>{dk} ({inf['dz']}){txt_nad}</div>"
-            karta_html += f"<div style='font-size:14px; font-weight:bold; color:green; border-bottom:1px solid {border}; padding-bottom:8px; margin-bottom:8px;'>Suma: {inf['suma']} pal.<br><span style='color:#555; font-size:11px; font-weight:normal;'>{tekst_zmiany}</span></div>"
+            karta_html += f"<div style='font-size:14px; font-weight:bold; color:green; border-bottom:1px solid {border}; padding-bottom:8px; margin-bottom:8px;'>Suma: {inf['suma']} pal.<br><span style='{styl_zmiany}'>{tekst_zmiany}</span></div>"
             
             for p in inf["p"]:
                 k_bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
