@@ -2,7 +2,6 @@ import datetime
 import pandas as pd
 import json
 import os
-
 # --- KONFIGURACJA ZAPISU DANYCH ---
 PLIK_DANYCH = "dane_zamowien.json"
 
