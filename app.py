@@ -1,20 +1,3 @@
-Widzę na ostatnim zrzucie ekranu, co dokładnie się stało! Zamiast samego kodu, skopiowałeś do pliku na GitHubie całą moją poprzednią wiadomość (razem ze zwykłym tekstem, który zaczynał się od słów "Rzeczywiście, na zrzucie ekranu widać...").
-
-Python to język programowania i próbował przeczytać moje polskie zdania jako komendy – stąd ten błąd SyntaxError w pierwszej linijce.
-
-Jak to naprawić?
-
-Wejdź na GitHuba w swój plik app.py (ten z konfekcją).
-
-Zaznacz tam absolutnie wszystko (Ctrl+A) i usuń. Plik ma być całkowicie pusty.
-
-W prawym górnym rogu czarnego bloku z kodem poniżej, kliknij przycisk "Copy" (kopiuj kod). Dzięki temu skopiujesz tylko program, bez mojego tekstu.
-
-Wklej skopiowany kod do pustego pliku na GitHubie i kliknij zielony przycisk "Commit changes".
-
-(Poprawiłem w nim też drobną literówkę, więc weź tę najnowszą wersję poniżej):
-
-Python
 import streamlit as st
 import datetime
 import pandas as pd
