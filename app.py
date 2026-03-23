@@ -60,16 +60,23 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
     ostatni_art = None 
 
     while zadania:
+        # 1. Zawsze najpierw sortujemy po terminie wysyłki, potem po artykule
+        zadania.sort(key=lambda x: (x['termin'], x['art']))
+        
+        # 2. Sprawdzamy, jaki jest NAJPILNIEJSZY termin w całej kolejce
+        najpilniejszy_termin = zadania[0]['termin']
+        
         idx_wybranego = -1
         
+        # 3. Szukamy kontynuacji asortymentu, ale TYLKO w obrębie najpilniejszego terminu wysyłki!
         if ostatni_art is not None:
             for i, z in enumerate(zadania):
-                if z['art'] == ostatni_art:
+                if z['termin'] == najpilniejszy_termin and z['art'] == ostatni_art:
                     idx_wybranego = i
                     break
         
+        # 4. Jeśli nie ma kontynuacji w tej samej dacie wysyłki, bierzemy pierwsze z brzegu dla tej daty
         if idx_wybranego == -1:
-            zadania.sort(key=lambda x: (x['termin'], x['art']))
             idx_wybranego = 0
 
         z = zadania.pop(idx_wybranego)
@@ -229,18 +236,17 @@ if st.session_state.kolejka:
             bg = "#fffcf2" if inf["nad"] else "white"
             txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:12px;'>⚠️ ZMIANA WYDŁUŻONA (9h)</span>" if inf["nad"] else ""
             
-            html_parts = []
-            html_parts.append(f"<div style='border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>")
-            html_parts.append(f"<div style='font-size:16px; font-weight:bold; color:#1f77b4; margin-bottom:4px;'>{dk} ({inf['dz']}){txt_nad}</div>")
-            html_parts.append(f"<div style='font-size:14px; font-weight:bold; color:green; border-bottom:1px solid {border}; padding-bottom:8px; margin-bottom:8px;'>Suma: {inf['suma']} pal.</div>")
+            karta_html = f"<div style='border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
+            karta_html += f"<div style='font-size:16px; font-weight:bold; color:#1f77b4; margin-bottom:4px;'>{dk} ({inf['dz']}){txt_nad}</div>"
+            karta_html += f"<div style='font-size:14px; font-weight:bold; color:green; border-bottom:1px solid {border}; padding-bottom:8px; margin-bottom:8px;'>Suma: {inf['suma']} pal.</div>"
             
             for p in inf["p"]:
                 k_bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
-                html_parts.append(f"<div style='background-color:{k_bg}; padding:6px; border-radius:5px; margin-bottom:6px; border:1px solid #ddd; font-size:12px;'><b style='font-size:13px;'>Art {p['Art']}</b>: {p['Palety']} pal.<br><span style='color:#555;'>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</span></div>")
+                karta_html += f"<div style='background-color:{k_bg}; padding:6px; border-radius:5px; margin-bottom:6px; border:1px solid #ddd; font-size:12px;'><b style='font-size:13px;'>Art {p['Art']}</b>: {p['Palety']} pal.<br><span style='color:#555;'>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</span></div>"
+                
+            karta_html += "</div>"
             
-            html_parts.append("</div>")
-            
-            st.markdown("".join(html_parts), unsafe_allow_html=True)
+            st.markdown(karta_html, unsafe_allow_html=True)
 
     st.divider()
     st.subheader("🔍 Kontrola zgodności zamówień")
