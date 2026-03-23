@@ -1,4 +1,4 @@
-import streamlit as st
+To świetne uzupełnienie! Dzięki temu operatorzy i Ty od razu widzicie, czy dany dzień można obsłużyć jedną brygadą, czy trzeba angażować ludzi na popołudnie.Skoro jedna zmiana ma 7 godzin netto (420 minut), system teraz sam sprawdza, ile czasu zajmie wyprodukowanie zaplanowanych palet:Jeśli czas produkcji $\le$ 420 minut $\rightarrow$ wyświetla: ⏱️ 1 zmiana (06:00 - 14:00)Jeśli czas produkcji > 420 minut $\rightarrow$ wyświetla: ⏱️ 2 zmiany (06:00 - 14:00, 14:00 - 22:00)Zaktualizowałem kod. Skopiuj całość i podmień w pliku app.py:Pythonimport streamlit as st
 import datetime
 import pandas as pd
 import json
@@ -236,9 +236,15 @@ if st.session_state.kolejka:
             bg = "#fffcf2" if inf["nad"] else "white"
             txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:12px;'>⚠️ ZMIANA WYDŁUŻONA (9h)</span>" if inf["nad"] else ""
             
+            # --- OBLICZANIE ZMIAN NA PODSTAWIE CZASU ---
+            if inf["czas_zajety"] <= 420:
+                tekst_zmiany = "⏱️ 1 zmiana (6-14)"
+            else:
+                tekst_zmiany = "⏱️ 2 zmiany (6-14, 14-22)"
+                
             karta_html = f"<div style='border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
             karta_html += f"<div style='font-size:16px; font-weight:bold; color:#1f77b4; margin-bottom:4px;'>{dk} ({inf['dz']}){txt_nad}</div>"
-            karta_html += f"<div style='font-size:14px; font-weight:bold; color:green; border-bottom:1px solid {border}; padding-bottom:8px; margin-bottom:8px;'>Suma: {inf['suma']} pal.</div>"
+            karta_html += f"<div style='font-size:14px; font-weight:bold; color:green; border-bottom:1px solid {border}; padding-bottom:8px; margin-bottom:8px;'>Suma: {inf['suma']} pal.<br><span style='color:#555; font-size:11px; font-weight:normal;'>{tekst_zmiany}</span></div>"
             
             for p in inf["p"]:
                 k_bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
