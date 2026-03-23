@@ -1,297 +1,204 @@
 import streamlit as st
-import datetime
-import pandas as pd
-import json
-import os
 
-# --- KONFIGURACJA ZAPISU DANYCH ---
-PLIK_DANYCH = "dane_zamowien.json"
+# --- KONFIGURACJA STRONY ---
+st.set_page_config(page_title="HMI - Zbiornik", layout="wide")
 
-def wczytaj_dane():
-    if os.path.exists(PLIK_DANYCH):
-        try:
-            with open(PLIK_DANYCH, "r", encoding="utf-8") as f:
-                dane = json.load(f)
-                for z in dane:
-                    z['termin'] = datetime.datetime.strptime(z['termin'], "%Y-%m-%d").date()
-                return dane
-        except Exception:
-            return []
-    return []
-
-def zapisz_dane(kolejka):
-    try:
-        kolejka_do_zapisu = []
-        for z in kolejka:
-            z_kopia = z.copy()
-            z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
-            kolejka_do_zapisu.append(z_kopia)
-        with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
-            json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
-    except Exception:
-        pass
-
-DNI_PL = {
-    "Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa",
-    "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
-}
-
-# Zaktualizowana wydajność: 1221217 robione w 120 minut (3,5 pal na zmianę 7h)
-WYDAJNOSC = {
-    "232": 84, "233": 56, "236": 84, "261": 84,
-    "246": 84, "254": 52.5, "1221217": 120,
-    "1221070": 52.5, "1221181": 210
-}
-
-st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
-
-if 'kolejka' not in st.session_state:
-    st.session_state.kolejka = wczytaj_dane()
-
-# --- LOGIKA PLANOWANIA ---
-@st.cache_data
-def generuj_plan_forward(kolejka_tuple, data_dzis):
-    if not kolejka_tuple: 
-        return {}, []
-
-    zadania = [dict(z) for z in kolejka_tuple]
-    plan_dni = {}
-    raport = []
-    MAX_CZAS_DOBA = 840 # 2 zmiany po 7h netto
-    ostatni_art = None 
-
-    while zadania:
-        # 1. Zawsze najpierw sortujemy po terminie wysyłki, potem po artykule
-        zadania.sort(key=lambda x: (x['termin'], x['art']))
+# --- STYLE CSS (Magia wyglądu SCADA) ---
+st.markdown("""
+    <style>
+        /* Czcionki i kolory nagłówków */
+        .scada-title {
+            color: #61A854;
+            font-family: 'Times New Roman', Times, serif;
+            text-align: center;
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 30px;
+        }
         
-        # 2. Sprawdzamy, jaki jest NAJPILNIEJSZY termin w całej kolejce
-        najpilniejszy_termin = zadania[0]['termin']
+        /* Styl dla wierszy z danymi (Tekst po lewej, wartość po prawej) */
+        .data-row {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            padding-right: 20px;
+        }
+        .data-label {
+            margin-right: 15px;
+        }
+        .data-value {
+            min-width: 80px;
+            text-align: left;
+        }
+
+        /* --- KONTROLKI (LAMPKI) --- */
+        .indicator-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 25px;
+            justify-content: center;
+        }
+        .lamp {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            margin-right: 15px;
+            box-shadow: inset -5px -5px 10px rgba(0,0,0,0.2);
+        }
+        .lamp-gray {
+            background-color: #d9d9d9;
+            border: 2px solid #ccc;
+        }
+        .lamp-green {
+            background-color: #2ed11f;
+            border: 2px solid #1fa113;
+            box-shadow: 0 0 15px #2ed11f, inset -5px -5px 10px rgba(0,0,0,0.2);
+        }
+        .lamp-label {
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        /* --- ZBIORNIK 3D --- */
+        .tank-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            height: 350px;
+            margin-top: 20px;
+        }
+        .tank {
+            width: 180px;
+            height: 300px;
+            background: linear-gradient(to right, #666 0%, #aaa 50%, #555 100%);
+            border-radius: 15px / 10px; /* Tworzy efekt walca */
+            position: relative;
+            overflow: hidden;
+            box-shadow: 5px 5px 15px rgba(0,0,0,0.3);
+            border-top: 2px solid #999;
+            border-bottom: 2px solid #333;
+        }
+        .tank-fill {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 50%; /* POZIOM WYPEŁNIENIA ZBIORNIKA */
+            background: linear-gradient(to right, #007bff 0%, #66b3ff 50%, #0066cc 100%);
+            border-top: 2px solid #005ce6;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+
+# --- GŁÓWNY UKŁAD STRONY ---
+
+# Pasek górny (Logo i logowanie)
+col_logo, col_empty, col_login = st.columns([2, 5, 2])
+with col_logo:
+    st.markdown("**🌐 BAJER ENTERPRISE**<br><small>INDUSTRIAL AUTOMATION</small>", unsafe_allow_html=True)
+with col_login:
+    # Atrapa pola logowania
+    st.text_input("Hasło", type="password", label_visibility="collapsed", placeholder="hasło")
+    c_btn1, c_btn2 = st.columns(2)
+    c_btn1.button("Zaloguj", use_container_width=True)
+    c_btn2.button("Wyloguj", use_container_width=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# Podział na 3 główne sekcje robocze (Lewa: Pomiary, Środek: Zbiornik, Prawa: Sterowanie)
+col_left, col_center, col_right = st.columns([1.5, 1, 1.5])
+
+# ==========================================
+# LEWA KOLUMNA: WSKAŹNIKI I POMIARY
+# ==========================================
+with col_left:
+    st.markdown("<div class='scada-title'>ZBIORNIK ZE ŚCIEKAMI</div>", unsafe_allow_html=True)
+    
+    # Dane ze zdjęcia wpisane na sztywno za pomocą HTML
+    st.markdown("""
+        <div class='data-row'><div class='data-label'>Zbiornik:</div><div class='data-value'>7.05 pH</div></div>
+        <div class='data-row'><div class='data-label'>Przepływ:</div><div class='data-value'>5.98 pH</div></div>
+        <br>
+        <div class='data-row'><div class='data-label'>Przepływ chwilowy:</div><div class='data-value'>0 m3/h</div></div>
+        <div class='data-row'><div class='data-label'>Przepływ od 8:00:</div><div class='data-value'>99.02 m3</div></div>
+        <div class='data-row'><div class='data-label'>Przepływ poprzedni dzień:</div><div class='data-value'>799.63 m3</div></div>
+        <br>
+        <div class='data-row'><div class='data-label'>Dotąd pobrano:</div><div class='data-value'>15.08 m3</div></div>
+    """, unsafe_allow_html=True)
+    
+    # Pole do wpisywania i przycisk (złożone w jednym wierszu)
+    st.markdown("<br>", unsafe_allow_html=True)
+    c_in1, c_in2 = st.columns([2, 1])
+    with c_in1:
+        st.markdown("<div style='text-align: right; font-weight: bold; font-size: 18px; margin-top: 5px;'>Ustawienie częstotliwości próby:</div>", unsafe_allow_html=True)
+    with c_in2:
+        nowa_proba = st.text_input("proba", label_visibility="collapsed")
+        st.button("Zaakceptuj", key="btn_proba")
         
-        idx_wybranego = -1
+    st.markdown("<div class='data-row'><div class='data-label'>Częstotliwość próby:</div><div class='data-value'>18 m3</div></div>", unsafe_allow_html=True)
+
+# ==========================================
+# ŚRODKOWA KOLUMNA: POZIOMY I ZBIORNIK
+# ==========================================
+with col_center:
+    c_lampki, c_zbiornik = st.columns([1, 2])
+    
+    with c_lampki:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        # 4 poziomy (2 szare, 2 zielone)
+        st.markdown("""
+            <div class='indicator-container' style='flex-direction: column;'>
+                <div class='lamp lamp-gray'></div><div class='lamp-label'>Poziom 4</div><br>
+                <div class='lamp lamp-gray'></div><div class='lamp-label'>Poziom 3</div><br>
+                <div class='lamp lamp-green'></div><div class='lamp-label'>Poziom 2</div><br>
+                <div class='lamp lamp-green'></div><div class='lamp-label'>Poziom 1</div>
+            </div>
+        """, unsafe_allow_html=True)
         
-        # 3. Szukamy kontynuacji asortymentu, ale TYLKO w obrębie najpilniejszego terminu wysyłki!
-        if ostatni_art is not None:
-            for i, z in enumerate(zadania):
-                if z['termin'] == najpilniejszy_termin and z['art'] == ostatni_art:
-                    idx_wybranego = i
-                    break
+    with c_zbiornik:
+        # Kod HTML/CSS renderujący zbiornik w 3D
+        st.markdown("""
+            <div class='tank-wrapper'>
+                <div class='tank'>
+                    <div class='tank-fill'></div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+
+# ==========================================
+# PRAWA KOLUMNA: ZASUWY I STEROWANIE
+# ==========================================
+with col_right:
+    st.markdown("<br><br>", unsafe_allow_html=True) # Wyrównanie w dół
+    st.markdown("<div class='scada-title'>REGULACJA ZASUWY</div>", unsafe_allow_html=True)
+    
+    c_in3, c_in4, c_in5 = st.columns([1.5, 1, 1])
+    with c_in3:
+        st.markdown("<div style='text-align: right; font-weight: bold; font-size: 18px; margin-top: 5px;'>Zadaj przepływ:</div>", unsafe_allow_html=True)
+    with c_in4:
+        nowy_przeplyw = st.text_input("przeplyw", label_visibility="collapsed")
+    with c_in5:
+        st.button("Zaakceptuj", key="btn_przeplyw")
         
-        # 4. Jeśli nie ma kontynuacji w tej samej dacie wysyłki, bierzemy pierwsze z brzegu dla tej daty
-        if idx_wybranego == -1:
-            idx_wybranego = 0
-
-        z = zadania.pop(idx_wybranego)
-        ile = z['ile']
-        wyd = WYDAJNOSC.get(z["art"], 70) 
-        data_kursora = data_dzis
-        
-        while ile > 0:
-            if data_kursora.weekday() == 6: # Pomiń niedzielę
-                data_kursora += datetime.timedelta(days=1)
-                continue
-                
-            d_key = data_kursora.strftime("%Y-%m-%d")
-            if d_key not in plan_dni:
-                plan_dni[d_key] = MAX_CZAS_DOBA
-            
-            wolny_czas = plan_dni[d_key]
-            
-            if data_kursora == z['termin']:
-                zajete_juz = MAX_CZAS_DOBA - wolny_czas
-                dostepny_dzis = max(0, 420 - zajete_juz)
-            else:
-                dostepny_dzis = wolny_czas
-                
-            produkcja = min(dostepny_dzis // wyd, ile)
-            is_nadgodziny = False
-            
-            jutro = data_kursora + datetime.timedelta(days=1)
-            if jutro.weekday() == 6: jutro += datetime.timedelta(days=1)
-            
-            if jutro == z['termin']:
-                d_key_jutro = jutro.strftime("%Y-%m-%d")
-                wolne_jutro = plan_dni.get(d_key_jutro, MAX_CZAS_DOBA)
-                zajete_jutro = MAX_CZAS_DOBA - wolne_jutro
-                dostepne_jutro = max(0, 420 - zajete_jutro)
-                
-                potrzeba_na_jutro = (ile - produkcja) * wyd
-                if potrzeba_na_jutro > dostepne_jutro:
-                    dodatek = (ile - produkcja) - (dostepne_jutro // wyd)
-                    produkcja += dodatek
-                    is_nadgodziny = True
-
-            if data_kursora == z['termin'] and ile > produkcja:
-                produkcja = ile 
-                is_nadgodziny = True
-                
-            if produkcja > 0:
-                raport.append({
-                    "Data": data_kursora.strftime("%d.%m"),
-                    "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
-                    "Art": z["art"],
-                    "Palety": int(produkcja),
-                    "Kraj": z.get("kraj", "Czechy"),
-                    "Wysyłka": z["termin"].strftime("%d.%m"),
-                    "dt_sort": data_kursora,
-                    "termin_sort": z["termin"],
-                    "Nadgodziny": is_nadgodziny
-                })
-                ile -= produkcja
-                plan_dni[d_key] -= (produkcja * wyd)
-                
-                # BLOKADA MASZYNY - żeby nie wpychać innego artykułu, jeśli ten nie jest skończony
-                if ile > 0:
-                    plan_dni[d_key] = 0
-                    
-                ostatni_art = z["art"]
-            
-            if ile > 0:
-                data_kursora += datetime.timedelta(days=1)
-
-    widok = {}
-    raport.sort(key=lambda x: (x['dt_sort'], x['termin_sort'], x['Art']))
-    for r in raport:
-        dk = r['Data']
-        if dk not in widok: 
-            widok[dk] = {"dz": r['Dzień'], "suma": 0, "p": [], "nad": False, "czas_zajety": 0}
-        widok[dk]["p"].append(r)
-        widok[dk]["suma"] += r["Palety"]
-        widok[dk]["czas_zajety"] += r["Palety"] * WYDAJNOSC.get(r["Art"], 70)
-        
-        if r["Nadgodziny"] or widok[dk]["czas_zajety"] > MAX_CZAS_DOBA:
-            widok[dk]["nad"] = True
-            
-    return widok, raport
-
-# --- INTERFEJS BOCZNY ---
-with st.sidebar:
-    st.markdown('<div style="font-size: 24px; font-weight: bold; color: #1f77b4; margin-bottom:15px;">Konfekcja SM</div>', unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div class='data-row' style='justify-content: center;'><div class='data-label'>Przepływ zadany:</div><div class='data-value'>80 m3</div></div>", unsafe_allow_html=True)
     
-    if st.button("➕ DODAJ ZAMÓWIENIE", type="primary", use_container_width=True): 
-        st.session_state.pokaz_f = True
+    st.markdown("<br>", unsafe_allow_html=True)
     
-    if st.button("🗑️ WYCZYŚĆ WSZYSTKO", use_container_width=True):
-        st.session_state.kolejka = []
-        zapisz_dane([])
-        st.cache_data.clear()
-        st.rerun()
-
-    st.divider()
-    st.subheader("✏️ Historia i Edycja Zamówień")
-    
-    if st.session_state.kolejka:
-        tab_cz, tab_sk = st.tabs(["🇨🇿 Czechy", "🇸🇰 Słowacja"])
-        
-        for zakładka, wybrany_kraj in zip([tab_cz, tab_sk], ["Czechy", "Słowacja"]):
-            with zakładka:
-                daty = sorted(list(set([z['termin'] for z in st.session_state.kolejka if z['kraj'] == wybrany_kraj])))
-                
-                if not daty:
-                    st.info(f"Brak zamówień na {wybrany_kraj}")
-                else:
-                    for d in daty:
-                        with st.expander(f"📅 Wysyłka: {d.strftime('%d.%m')}"):
-                            for i, z in enumerate(st.session_state.kolejka):
-                                if z['termin'] == d and z['kraj'] == wybrany_kraj:
-                                    c1, c2 = st.columns([3, 1])
-                                    nowa_il = c1.number_input(f"Art {z['art']}", value=int(z['ile']), min_value=1, key=f"ed_{i}")
-                                    
-                                    if c2.button("❌", key=f"del_{i}"):
-                                        st.session_state.kolejka.pop(i)
-                                        zapisz_dane(st.session_state.kolejka)
-                                        st.rerun()
-                                    
-                                    if nowa_il != z['ile']:
-                                        st.session_state.kolejka[i]['ile'] = nowa_il
-                                        zapisz_dane(st.session_state.kolejka)
-                                        st.rerun()
-    else:
-        st.info("Brak wprowadzonych zamówień.")
-
-# --- GŁÓWNY EKRAN ---
-st.title("Harmonogram Produkcji")
-
-if st.session_state.get('pokaz_f'):
-    with st.form("add_form"):
-        kraj = st.selectbox("Kraj", ["Czechy", "Słowacja"])
-        term = st.date_input("Termin", datetime.date.today() + datetime.timedelta(days=2))
-        cols = st.columns(3)
-        temp_dodaj = []
-        for i, art_id in enumerate(WYDAJNOSC.keys()):
-            with cols[i % 3]:
-                v = st.number_input(f"Art {art_id}", min_value=0, step=1)
-                if v > 0: temp_dodaj.append({"art": art_id, "ile": v, "termin": term, "kraj": kraj})
-        if st.form_submit_button("Zatwierdź"):
-            st.session_state.kolejka.extend(temp_dodaj)
-            zapisz_dane(st.session_state.kolejka)
-            st.session_state.pokaz_f = False
-            st.rerun()
-
-if st.session_state.kolejka:
-    k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
-    dni, raport_surowy = generuj_plan_forward(k_tuple, datetime.date.today())
-
-    st.subheader("🗓️ Realny Plan Produkcji")
-    grid = st.columns(5)
-    sorted_dni = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
-    
-    for i, dk in enumerate(sorted_dni):
-        with grid[i % 5]:
-            inf = dni[dk]
-            border = "#ffb300" if inf["nad"] else "#e0e0e0"
-            bg = "#fffcf2" if inf["nad"] else "white"
-            txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:12px;'>⚠️ ZMIANA WYDŁUŻONA</span>" if inf["nad"] else ""
-            
-            # --- OBLICZANIE ZMIAN I GODZIN PRACY ---
-            if inf["czas_zajety"] <= 420:
-                if inf["nad"]:
-                    tekst_zmiany = "⏱️ 1 zmiana (06:00 - 15:00)"
-                else:
-                    tekst_zmiany = "⏱️ 1 zmiana (06:00 - 14:00)"
-            else:
-                if inf["nad"]:
-                    tekst_zmiany = "⏱️ 2 zmiany (06:00 - 15:00, 15:00 - 23:00)"
-                else:
-                    tekst_zmiany = "⏱️ 2 zmiany (06:00 - 14:00, 14:00 - 22:00)"
-            
-            styl_zmiany = "color:#e65100; font-size:13px; font-weight:bold;" if inf["nad"] else "color:#444; font-size:13px; font-weight:bold;"
-                
-            karta_html = f"<div style='border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
-            karta_html += f"<div style='font-size:16px; font-weight:bold; color:#1f77b4; margin-bottom:4px;'>{dk} ({inf['dz']}){txt_nad}</div>"
-            karta_html += f"<div style='font-size:14px; font-weight:bold; color:green; border-bottom:1px solid {border}; padding-bottom:8px; margin-bottom:8px;'>Suma: {inf['suma']} pal.<br><span style='{styl_zmiany}'>{tekst_zmiany}</span></div>"
-            
-            for p in inf["p"]:
-                k_bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
-                karta_html += f"<div style='background-color:{k_bg}; padding:6px; border-radius:5px; margin-bottom:6px; border:1px solid #ddd; font-size:12px;'><b style='font-size:13px;'>Art {p['Art']}</b>: {p['Palety']} pal.<br><span style='color:#555;'>Wysyłka: {p['Wysyłka']} ({p['Kraj']})</span></div>"
-                
-            karta_html += "</div>"
-            
-            st.markdown(karta_html, unsafe_allow_html=True)
-
-    st.divider()
-    st.subheader("🔍 Kontrola zgodności zamówień")
-    
-    df_z = pd.DataFrame(st.session_state.kolejka)
-    df_z['Wysyłka'] = df_z['termin'].apply(lambda x: x.strftime("%d.%m"))
-    res = df_z.groupby(['Wysyłka', 'kraj', 'art'])['ile'].sum().reset_index()
-    res = res.rename(columns={'kraj': 'Kraj', 'art': 'Artykuł', 'ile': 'Zamówiono (pal)'})
-    
-    if raport_surowy:
-        df_r = pd.DataFrame(raport_surowy)
-        res_r = df_r.groupby(['Wysyłka', 'Kraj', 'Art'])['Palety'].sum().reset_index()
-        res_r = res_r.rename(columns={'Art': 'Artykuł', 'Palety': 'Zaplanowano (pal)'})
-        final = pd.merge(res, res_r, on=['Wysyłka', 'Kraj', 'Artykuł'], how='left').fillna(0)
-    else:
-        final = res.copy()
-        final['Zaplanowano (pal)'] = 0
-        
-    final['Status'] = final.apply(lambda x: "✅ OK" if x['Zamówiono (pal)'] == x['Zaplanowano (pal)'] else "❌ BŁĄD", axis=1)
-    
-    def style_wiersze(row):
-        kolor = '#d4edda' if row['Kraj'] == 'Słowacja' else ''
-        return [f'background-color: {kolor}'] * len(row)
-    
-    st.dataframe(final.style.apply(style_wiersze, axis=1), use_container_width=True, hide_index=True)
-
-else:
-    st.info("Brak zamówień. Dodaj je w panelu bocznym.")
+    c_zas1, c_zas2 = st.columns(2)
+    with c_zas1:
+        st.markdown("""
+            <div class='indicator-container' style='flex-direction: column;'>
+                <div class='lamp lamp-gray'></div><div class='lamp-label'>Zasuwa max<br>otwarta</div>
+            </div>
+        """, unsafe_allow_html=True)
+    with c_zas2:
+         st.markdown("""
+            <div class='indicator-container' style='flex-direction: column;'>
+                <div class='lamp lamp-green'></div><div class='lamp-label'>Zasuwa max<br>zamknieta</div>
+            </div>
+        """, unsafe_allow_html=True)
