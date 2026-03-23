@@ -1,10 +1,18 @@
-Rzeczywiście, na zrzucie ekranu widać, że kafelki kompletnie się "rozjechały". Ten ogromny biały obszar wynikał z technicznego zachowania Streamlita – program automatycznie zamykał blok ramki (ten główny biały z datą), a same zamówienia drukował pod spodem, zamiast wewnątrz niego.
+Widzę na ostatnim zrzucie ekranu, co dokładnie się stało! Zamiast samego kodu, skopiowałeś do pliku na GitHubie całą moją poprzednią wiadomość (razem ze zwykłym tekstem, który zaczynał się od słów "Rzeczywiście, na zrzucie ekranu widać...").
 
-Dodatkowo, przebudowałem całkowicie panel boczny z historią. Teraz masz dwie bardzo wygodne zakładki (Czechy i Słowacja), gdzie widzisz dokładnie co jest wbite, pogrupowane po datach, i gdzie możesz w locie edytować palety lub usuwać zamówienia.
+Python to język programowania i próbował przeczytać moje polskie zdania jako komendy – stąd ten błąd SyntaxError w pierwszej linijce.
 
-Zmieniłem sposób renderowania kafelków na pojedynczy blok HTML. Zniknęło puste białe miejsce, a ramki będą elastycznie dopasowywać się do zawartości. Jeśli wpadną nadgodziny, pojawi się dyskretny, ale czytelny komunikat: ⚠️ ZMIANA WYDŁUŻONA (9h).
+Jak to naprawić?
 
-Oto kompletny kod do podmiany w pliku na Twoim GitHubie:
+Wejdź na GitHuba w swój plik app.py (ten z konfekcją).
+
+Zaznacz tam absolutnie wszystko (Ctrl+A) i usuń. Plik ma być całkowicie pusty.
+
+W prawym górnym rogu czarnego bloku z kodem poniżej, kliknij przycisk "Copy" (kopiuj kod). Dzięki temu skopiujesz tylko program, bez mojego tekstu.
+
+Wklej skopiowany kod do pustego pliku na GitHubie i kliknij zielony przycisk "Commit changes".
+
+(Poprawiłem w nim też drobną literówkę, więc weź tę najnowszą wersję poniżej):
 
 Python
 import streamlit as st
@@ -116,7 +124,7 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                 dostepne_jutro = max(0, 420 - zajete_jutro)
                 
                 potrzeba_na_jutro = (ile - produkcja) * wyd
-                if potrzeba_na_jutro > (dostepne_jutro):
+                if potrzeba_na_jutro > dostepne_jutro:
                     dodatek = (ile - produkcja) - (dostepne_jutro // wyd)
                     produkcja += dodatek
                     is_nadgodziny = True
@@ -178,13 +186,11 @@ with st.sidebar:
     if st.session_state.kolejka:
         tab_cz, tab_sk = st.tabs(["🇨🇿 Czechy", "🇸🇰 Słowacja"])
         
-        # Filtrujemy i edytujemy po krajach
         for zakładka, wybrany_kraj in zip([tab_cz, tab_sk], ["Czechy", "Słowacja"]):
             with zakładka:
-                # Szukamy dat wysyłek tylko dla danego kraju
                 daty = sorted(list(set([z['termin'] for z in st.session_state.kolejka if z['kraj'] == wybrany_kraj])))
                 
-                if nie daty:
+                if not daty:
                     st.info(f"Brak zamówień na {wybrany_kraj}")
                 else:
                     for d in daty:
@@ -194,13 +200,11 @@ with st.sidebar:
                                     c1, c2 = st.columns([3, 1])
                                     nowa_il = c1.number_input(f"Art {z['art']}", value=int(z['ile']), min_value=1, key=f"ed_{i}")
                                     
-                                    # Przycisk usunięcia
                                     if c2.button("❌", key=f"del_{i}"):
                                         st.session_state.kolejka.pop(i)
                                         zapisz_dane(st.session_state.kolejka)
                                         st.rerun()
                                     
-                                    # Aktualizacja wartości
                                     if nowa_il != z['ile']:
                                         st.session_state.kolejka[i]['ile'] = nowa_il
                                         zapisz_dane(st.session_state.kolejka)
@@ -242,7 +246,6 @@ if st.session_state.kolejka:
             bg = "#fffcf2" if inf["nad"] else "white"
             txt_nad = "<br><span style='color:#e65100; font-weight:bold; font-size:12px;'>⚠️ ZMIANA WYDŁUŻONA (9h)</span>" if inf["nad"] else ""
             
-            # --- ZŁOŻENIE CAŁEGO KAFELKA W JEDNYM BLOKU HTML ---
             karta_html = f"""
             <div style="border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                 <div style="font-size:16px; font-weight:bold; color:#1f77b4; margin-bottom:4px;">{dk} ({inf['dz']}){txt_nad}</div>
@@ -251,11 +254,7 @@ if st.session_state.kolejka:
             
             for p in inf["p"]:
                 k_bg = "#d4edda" if p["Kraj"] == "Słowacja" else "#f8f9fa"
-                alert = ""
-                # Wewnętrzny znacznik przedłużonej zmiany, jeśli konkretne zamówienie ją wywołało
-                if p.get("Nadgodziny") and not inf["nad"]: 
-                    pass # Pomijamy, bo daliśmy globalny alert dla całego dnia
-                    
+                
                 karta_html += f"""
                 <div style="background-color:{k_bg}; padding:6px; border-radius:5px; margin-bottom:6px; border:1px solid #ddd; font-size:12px;">
                     <b style="font-size:13px;">Art {p['Art']}</b>: {p['Palety']} pal.<br>
@@ -264,10 +263,8 @@ if st.session_state.kolejka:
                 """
             karta_html += "</div>"
             
-            # Renderujemy cały sklejony kod jako jeden element - to eliminuje dziury i błędy wyświetlania!
             st.markdown(karta_html, unsafe_allow_html=True)
 
-    # --- TABELA KONTROLNA ---
     st.divider()
     st.subheader("🔍 Kontrola zgodności zamówień")
     
