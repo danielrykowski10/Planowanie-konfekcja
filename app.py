@@ -1,4 +1,3 @@
-To świetne uzupełnienie! Dzięki temu operatorzy i Ty od razu widzicie, czy dany dzień można obsłużyć jedną brygadą, czy trzeba angażować ludzi na popołudnie.Skoro jedna zmiana ma 7 godzin netto (420 minut), system teraz sam sprawdza, ile czasu zajmie wyprodukowanie zaplanowanych palet:Jeśli czas produkcji $\le$ 420 minut $\rightarrow$ wyświetla: ⏱️ 1 zmiana (06:00 - 14:00)Jeśli czas produkcji > 420 minut $\rightarrow$ wyświetla: ⏱️ 2 zmiany (06:00 - 14:00, 14:00 - 22:00)Zaktualizowałem kod. Skopiuj całość i podmień w pliku app.py:Pythonimport streamlit as st
 import datetime
 import pandas as pd
 import json
