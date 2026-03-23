@@ -36,9 +36,10 @@ DNI_PL = {
     "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
 }
 
+# Zaktualizowana wydajność: 1221217 robione w 120 minut (3,5 pal na zmianę 7h)
 WYDAJNOSC = {
     "232": 84, "233": 56, "236": 84, "261": 84,
-    "246": 84, "254": 52.5, "1221217": 240,
+    "246": 84, "254": 52.5, "1221217": 120,
     "1221070": 52.5, "1221181": 210
 }
 
@@ -60,17 +61,22 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
     ostatni_art = None 
 
     while zadania:
+        # 1. Zawsze najpierw sortujemy po terminie wysyłki, potem po artykule
         zadania.sort(key=lambda x: (x['termin'], x['art']))
+        
+        # 2. Sprawdzamy, jaki jest NAJPILNIEJSZY termin w całej kolejce
         najpilniejszy_termin = zadania[0]['termin']
         
         idx_wybranego = -1
         
+        # 3. Szukamy kontynuacji asortymentu, ale TYLKO w obrębie najpilniejszego terminu wysyłki!
         if ostatni_art is not None:
             for i, z in enumerate(zadania):
                 if z['termin'] == najpilniejszy_termin and z['art'] == ostatni_art:
                     idx_wybranego = i
                     break
         
+        # 4. Jeśli nie ma kontynuacji w tej samej dacie wysyłki, bierzemy pierwsze z brzegu dla tej daty
         if idx_wybranego == -1:
             idx_wybranego = 0
 
@@ -133,9 +139,7 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                 ile -= produkcja
                 plan_dni[d_key] -= (produkcja * wyd)
                 
-                # --- KLUCZOWA ZMIANA: BLOKADA MASZYNY ---
-                # Jeśli wyprodukowaliśmy coś dzisiaj, ale to nie koniec partii (ile > 0)
-                # blokujemy resztę wolnego czasu w tym dniu, żeby inna partia nam się nie wcięła na 2 godziny!
+                # BLOKADA MASZYNY - żeby nie wpychać innego artykułu, jeśli ten nie jest skończony
                 if ile > 0:
                     plan_dni[d_key] = 0
                     
