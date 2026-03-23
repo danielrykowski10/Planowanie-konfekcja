@@ -1,3 +1,15 @@
+Zrozumiałem dokładnie, na czym polega problem! Na hali produkcyjnej mówi się na to potocznie "sieczka".
+
+Dlaczego algorytm tak skakał?
+Artykuł 1221217 jest bardzo czasochłonny (4 godziny na paletę). W ciągu 14-godzinnej dniówki (840 minut) maszyna zdąży zrobić równe 3 palety (co zajmuje 720 minut). Zostaje 120 minut "luzu". Algorytm zachowywał się do tej pory jak nadgorliwy planista zza biurka – widział 2 godziny wolnego, więc żeby maszyna nie stała, na siłę wciskał tam 1 paletę Artykułu 232, po czym następnego dnia znów kazał przezbrajać maszynę na 1221217. Fizycznie na produkcji to czysty absurd.
+
+Jak to naprawiłem?
+Wprowadziłem Zasadę Blokady Maszyny.
+Jeśli system zacznie robić dany asortyment (np. 1221217) i pod koniec dnia widzi, że nie zrealizował jeszcze całego zamówienia (czyli będzie musiał kontynuować jutro) – całkowicie blokuje resztę tego dnia. Nie wpuści w to miejsce żadnego innego asortymentu. Dopiero w dniu, w którym całkowicie zakończy daną partię i zostanie mu np. 6 wolnych godzin, zacznie w tym czasie kolejny artykuł.
+
+Zaznacz wszystko na swoim GitHubie, usuń, skopiuj poniższy kod i wklej:
+
+Python
 import streamlit as st
 import datetime
 import pandas as pd
@@ -60,22 +72,17 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
     ostatni_art = None 
 
     while zadania:
-        # 1. Zawsze najpierw sortujemy po terminie wysyłki, potem po artykule
         zadania.sort(key=lambda x: (x['termin'], x['art']))
-        
-        # 2. Sprawdzamy, jaki jest NAJPILNIEJSZY termin w całej kolejce
         najpilniejszy_termin = zadania[0]['termin']
         
         idx_wybranego = -1
         
-        # 3. Szukamy kontynuacji asortymentu, ale TYLKO w obrębie najpilniejszego terminu wysyłki!
         if ostatni_art is not None:
             for i, z in enumerate(zadania):
                 if z['termin'] == najpilniejszy_termin and z['art'] == ostatni_art:
                     idx_wybranego = i
                     break
         
-        # 4. Jeśli nie ma kontynuacji w tej samej dacie wysyłki, bierzemy pierwsze z brzegu dla tej daty
         if idx_wybranego == -1:
             idx_wybranego = 0
 
@@ -137,6 +144,13 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                 })
                 ile -= produkcja
                 plan_dni[d_key] -= (produkcja * wyd)
+                
+                # --- KLUCZOWA ZMIANA: BLOKADA MASZYNY ---
+                # Jeśli wyprodukowaliśmy coś dzisiaj, ale to nie koniec partii (ile > 0)
+                # blokujemy resztę wolnego czasu w tym dniu, żeby inna partia nam się nie wcięła na 2 godziny!
+                if ile > 0:
+                    plan_dni[d_key] = 0
+                    
                 ostatni_art = z["art"]
             
             if ile > 0:
@@ -248,7 +262,6 @@ if st.session_state.kolejka:
                 else:
                     tekst_zmiany = "⏱️ 2 zmiany (06:00 - 14:00, 14:00 - 22:00)"
             
-            # Kolor i stylizacja czcionki (jeśli nadgodziny -> pomarańczowy, jeśli norma -> ciemnoszary)
             styl_zmiany = "color:#e65100; font-size:13px; font-weight:bold;" if inf["nad"] else "color:#444; font-size:13px; font-weight:bold;"
                 
             karta_html = f"<div style='border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>"
