@@ -1,15 +1,3 @@
-Zrozumiałem dokładnie, na czym polega problem! Na hali produkcyjnej mówi się na to potocznie "sieczka".
-
-Dlaczego algorytm tak skakał?
-Artykuł 1221217 jest bardzo czasochłonny (4 godziny na paletę). W ciągu 14-godzinnej dniówki (840 minut) maszyna zdąży zrobić równe 3 palety (co zajmuje 720 minut). Zostaje 120 minut "luzu". Algorytm zachowywał się do tej pory jak nadgorliwy planista zza biurka – widział 2 godziny wolnego, więc żeby maszyna nie stała, na siłę wciskał tam 1 paletę Artykułu 232, po czym następnego dnia znów kazał przezbrajać maszynę na 1221217. Fizycznie na produkcji to czysty absurd.
-
-Jak to naprawiłem?
-Wprowadziłem Zasadę Blokady Maszyny.
-Jeśli system zacznie robić dany asortyment (np. 1221217) i pod koniec dnia widzi, że nie zrealizował jeszcze całego zamówienia (czyli będzie musiał kontynuować jutro) – całkowicie blokuje resztę tego dnia. Nie wpuści w to miejsce żadnego innego asortymentu. Dopiero w dniu, w którym całkowicie zakończy daną partię i zostanie mu np. 6 wolnych godzin, zacznie w tym czasie kolejny artykuł.
-
-Zaznacz wszystko na swoim GitHubie, usuń, skopiuj poniższy kod i wklej:
-
-Python
 import streamlit as st
 import datetime
 import pandas as pd
