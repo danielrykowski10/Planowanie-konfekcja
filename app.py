@@ -36,12 +36,17 @@ DNI_PL = {
     "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
 }
 
-# --- ZAKTUALIZOWANA WYDAJNOŚĆ ---
-# 233 zmienione na 56 minut (840 min / 15 palet = 56 min/paletę)
+# --- NOWE NORMY WYDAJNOŚCIOWE (MINUTY NA PALETĘ) ---
 WYDAJNOSC = {
-    "232": 70, "233": 56, "246": 70, "261": 84,
-    "236": 84, "254": 52.5, "1221217": 120,
-    "1221070": 52.5, "1221181": 84
+    "232": 84, 
+    "233": 56, 
+    "236": 84, 
+    "261": 84,
+    "246": 84, 
+    "254": 52.5, 
+    "1221217": 240,
+    "1221070": 52.5, 
+    "1221181": 210
 }
 
 st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
@@ -49,7 +54,7 @@ st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = wczytaj_dane()
 
-# --- POPRAWIONA LOGIKA PLANOWANIA ---
+# --- LOGIKA PLANOWANIA ---
 @st.cache_data
 def generuj_plan_forward(kolejka_tuple, data_dzis):
     if not kolejka_tuple: 
@@ -78,7 +83,7 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
 
         z = zadania.pop(idx_wybranego)
         ile = z['ile']
-        wyd = WYDAJNOSC.get(z["art"], 70)
+        wyd = WYDAJNOSC.get(z["art"], 70) # Domyślnie 70, jeśli dodasz kiedyś nowy bez wpisu
         data_kursora = data_dzis
         
         while ile > 0:
@@ -106,7 +111,6 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
             jutro = data_kursora + datetime.timedelta(days=1)
             if jutro.weekday() == 6: jutro += datetime.timedelta(days=1)
             
-            # Jeśli jutro wysyłka, a nie zdążymy w normalnym czasie - włącz nadgodziny
             if jutro == z['termin']:
                 d_key_jutro = jutro.strftime("%Y-%m-%d")
                 wolne_jutro = plan_dni.get(d_key_jutro, MAX_CZAS_DOBA)
@@ -115,7 +119,6 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
                 
                 potrzeba_na_jutro = (ile - produkcja) * wyd
                 if potrzeba_na_jutro > (dostepne_jutro):
-                    # Przerzucamy nadmiar na dzisiaj jako nadgodziny
                     dodatek = (ile - produkcja) - (dostepne_jutro // wyd)
                     produkcja += dodatek
                     is_nadgodziny = True
@@ -154,7 +157,8 @@ def generuj_plan_forward(kolejka_tuple, data_dzis):
         widok[dk]["p"].append(r)
         widok[dk]["suma"] += r["Palety"]
         widok[dk]["czas_zajety"] += r["Palety"] * WYDAJNOSC.get(r["Art"], 70)
-        # Jeśli suma minut przekracza 840 LUB flaga Nadgodziny jest True
+        
+        # Flaga Nadgodziny lub przekroczony fizyczny czas (840 min)
         if r["Nadgodziny"] or widok[dk]["czas_zajety"] > MAX_CZAS_DOBA:
             widok[dk]["nad"] = True
             
