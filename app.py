@@ -8,7 +8,7 @@ import os
 PLIK_DANYCH = "dane_zamowien.json"
 st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
-# Stylizacja - Ramka przy dacie i poprawiony układ
+# Stylizacja - Poprawione ramki i kolory
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -33,7 +33,7 @@ st.markdown("""
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
         position: relative;
     }
-    .date-frame {
+    .date-badge {
         border: 2px solid #1B5E20;
         background-color: #F1F8E9;
         border-radius: 8px;
@@ -41,7 +41,7 @@ st.markdown("""
         display: inline-block;
         text-align: center;
     }
-    .date-frame-nad {
+    .date-badge-nad {
         border: 2px solid #E65100;
         background-color: #FFF3E0;
         border-radius: 8px;
@@ -75,7 +75,7 @@ def zapisz_dane(kolejka):
     with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
         json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
 
-DNI_PL = {"Monday": "Pon", "Tuesday": "Wt", "Wednesday": "Śr", "Thursday": "Czw", "Friday": "Pt", "Saturday": "Sob", "Sunday": "Nd"}
+DNI_PL = {"Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa", "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"}
 WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
 
 # --- LOGIKA PLANOWANIA ---
@@ -145,9 +145,23 @@ with t1:
 
     if st.session_state.kolejka:
         st.subheader("Kolejka (Edytuj bezpośrednio)")
-        edit_df = st.data_editor(pd.DataFrame(st.session_state.kolejka), use_container_width=True, hide_index=True)
+        
+        # --- ZIELONA SŁOWACJA W TABELI ---
+        df_edit = pd.DataFrame(st.session_state.kolejka)
+        def style_sk(row):
+            return ['background-color: #C8E6C9' if row.kraj == 'Słowacja' else ''] * len(row)
+        
+        # Wyświetlamy edytowalną tabelę z kolorowaniem Słowacji
+        st.data_editor(
+            df_edit.style.apply(style_sk, axis=1), 
+            use_container_width=True, 
+            hide_index=True
+        )
+        
         if st.button("USUŃ WSZYSTKO"):
             st.session_state.kolejka = []; zapisz_dane([]); st.rerun()
+    else:
+        st.info("Brak zamówień.")
 
 with t2:
     if st.session_state.kolejka:
@@ -158,34 +172,27 @@ with t2:
                 d = dni_plan[dk]
                 nad = d["ma_nad"] or d["czas_suma"] > 840
                 c_h = "#E65100" if nad else "#1B5E20"
-                frame_class = "date-frame-nad" if nad else "date-frame"
+                badge_class = "date-badge-nad" if nad else "date-badge"
                 
-                # --- NAGŁÓWEK Z RAMKĄ, PRZYDATNOŚCIĄ I KRZYŻYKIEM ---
-                head_col1, head_col2, head_col3 = st.columns([1.5, 2, 0.5])
+                # NAGŁÓWEK Z DUŻĄ PRZYDATNOŚCIĄ I KRZYŻYKIEM
+                c_head1, c_head2, c_head3 = st.columns([1.5, 2.5, 0.5])
                 
-                # RAMKA Z DATĄ
-                head_col1.markdown(f"""
-                    <div class='{frame_class}'>
-                        <b style='color:{c_h}; font-size:15px;'>{dk} ({d['dz']})</b>
-                    </div>
-                """, unsafe_allow_html=True)
+                c_head1.markdown(f"<div class='{badge_class}'><b style='color:{c_h}; font-size:14px;'>{dk} ({d['dz'][:3]})</b></div>", unsafe_allow_html=True)
                 
-                # PRZYDATNOŚĆ NA ŚRODKU
-                head_col2.markdown(f"<center><b style='color:#d32f2f; font-size:11px; line-height:30px;'>PRZ: {d['prz']}</b></center>", unsafe_allow_html=True)
+                # --- TUTAJ POWIĘKSZONA I POGRUBIONA PRZYDATNOŚĆ ---
+                c_head2.markdown(f"<center><b style='color:#d32f2f; font-size:14px; line-height:35px;'>PRZ: {d['prz']}</b></center>", unsafe_allow_html=True)
                 
-                # KRZYŻYK
-                if head_col3.button("❌", key=f"del_{dk}"):
+                if c_head3.button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
                     zapisz_dane(st.session_state.kolejka); st.rerun()
 
-                # --- TREŚĆ KARTY ---
                 zm = "2 zmiany" if d["czas_suma"] > 420 else "1 zmiana"
                 godz = "06-15 / 15-23" if nad else "06-14 / 14-22"
-                bg_header = "#FFF3E0" if nad else "#F1F8E9"
+                bg_h = "#FFF3E0" if nad else "#F1F8E9"
                 
                 html = f"""<div class='karta-dnia' style='border-color:{c_h}'>
-                <div style='background:{bg_header}; padding:5px; border-radius:5px; margin-bottom:10px;'>
+                <div style='background:{bg_h}; padding:5px; border-radius:5px; margin-bottom:10px;'>
                 <b>SUMA: {int(d['suma'])} palet</b><br>
                 <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
                 </div>"""
