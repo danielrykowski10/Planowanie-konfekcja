@@ -8,7 +8,7 @@ import os
 PLIK_DANYCH = "dane_zamowien.json"
 st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
-# Stylizacja - Poprawione ramki i kolory
+# --- LUKSUSOWA STYLIZACJA ---
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -24,6 +24,7 @@ st.markdown("""
         background-color: #2E7D32 !important;
         color: white !important;
     }
+    /* GŁÓWNA KARTA DNIA */
     .karta-dnia {
         border: 2px solid #2E7D32; 
         border-radius: 12px; 
@@ -33,21 +34,24 @@ st.markdown("""
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
         position: relative;
     }
+    /* RAMKA DATY (BADGE) */
     .date-badge {
         border: 2px solid #1B5E20;
         background-color: #F1F8E9;
-        border-radius: 8px;
-        padding: 4px 10px;
+        border-radius: 10px;
+        padding: 6px 12px;
         display: inline-block;
         text-align: center;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
     }
     .date-badge-nad {
         border: 2px solid #E65100;
         background-color: #FFF3E0;
-        border-radius: 8px;
-        padding: 4px 10px;
+        border-radius: 10px;
+        padding: 6px 12px;
         display: inline-block;
         text-align: center;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -117,7 +121,7 @@ def generuj_plan_finalny(kolejka, pracujemy_niedziela):
         if r["nad"]: widok[dk]["ma_nad"] = True
     return widok, raport
 
-# --- START ---
+# --- PROGRAM GŁÓWNY ---
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = wczytaj_dane()
 
@@ -145,23 +149,12 @@ with t1:
 
     if st.session_state.kolejka:
         st.subheader("Kolejka (Edytuj bezpośrednio)")
-        
-        # --- ZIELONA SŁOWACJA W TABELI ---
         df_edit = pd.DataFrame(st.session_state.kolejka)
         def style_sk(row):
             return ['background-color: #C8E6C9' if row.kraj == 'Słowacja' else ''] * len(row)
-        
-        # Wyświetlamy edytowalną tabelę z kolorowaniem Słowacji
-        st.data_editor(
-            df_edit.style.apply(style_sk, axis=1), 
-            use_container_width=True, 
-            hide_index=True
-        )
-        
+        st.data_editor(df_edit.style.apply(style_sk, axis=1), use_container_width=True, hide_index=True)
         if st.button("USUŃ WSZYSTKO"):
             st.session_state.kolejka = []; zapisz_dane([]); st.rerun()
-    else:
-        st.info("Brak zamówień.")
 
 with t2:
     if st.session_state.kolejka:
@@ -174,19 +167,22 @@ with t2:
                 c_h = "#E65100" if nad else "#1B5E20"
                 badge_class = "date-badge-nad" if nad else "date-badge"
                 
-                # NAGŁÓWEK Z DUŻĄ PRZYDATNOŚCIĄ I KRZYŻYKIEM
-                c_head1, c_head2, c_head3 = st.columns([1.5, 2.5, 0.5])
+                # --- NAGŁÓWEK Z PEŁNĄ NAZWĄ DNIA ---
+                c_head1, c_head2, c_head3 = st.columns([2.5, 3.5, 0.5])
                 
-                c_head1.markdown(f"<div class='{badge_class}'><b style='color:{c_h}; font-size:14px;'>{dk} ({d['dz'][:3]})</b></div>", unsafe_allow_html=True)
+                # Ramka z pełną datą (usunięto skracanie [:3])
+                c_head1.markdown(f"<div class='{badge_class}'><b style='color:{c_h}; font-size:14px;'>{dk} ({d['dz']})</b></div>", unsafe_allow_html=True)
                 
-                # --- TUTAJ POWIĘKSZONA I POGRUBIONA PRZYDATNOŚĆ ---
+                # Duża przydatność na środku
                 c_head2.markdown(f"<center><b style='color:#d32f2f; font-size:14px; line-height:35px;'>PRZ: {d['prz']}</b></center>", unsafe_allow_html=True)
                 
+                # Przycisk usuwania
                 if c_head3.button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
                     zapisz_dane(st.session_state.kolejka); st.rerun()
 
+                # --- TREŚĆ KARTY ---
                 zm = "2 zmiany" if d["czas_suma"] > 420 else "1 zmiana"
                 godz = "06-15 / 15-23" if nad else "06-14 / 14-22"
                 bg_h = "#FFF3E0" if nad else "#F1F8E9"
