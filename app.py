@@ -8,7 +8,7 @@ import os
 PLIK_DANYCH = "dane_zamowien.json"
 st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
-# Stylizacja
+# Stylizacja - Poprawiona, by karty były czytelne
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -27,10 +27,11 @@ st.markdown("""
     .karta-dnia {
         border: 2px solid #2E7D32; 
         border-radius: 12px; 
-        padding: 15px; 
+        padding: 12px; 
         background-color: white; 
         margin-bottom: 20px;
-        box-shadow: 3px 3px 10px rgba(0,0,0,0.1);
+        box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+        min-height: 300px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -132,19 +133,11 @@ with tab1:
     st.subheader("Aktualna lista w kolejce")
     if st.session_state.kolejka:
         df_edit = pd.DataFrame(st.session_state.kolejka)
-        
-        # --- ZIELONA SŁOWACJA W TABELI KOLEJKI ---
         def style_kolejka(row):
             kolor = 'background-color: #C8E6C9' if row.kraj == 'Słowacja' else ''
             return [kolor] * len(row)
-        
-        st.dataframe(
-            df_edit[['kraj', 'art', 'ile', 'start_produkcji', 'termin']].style.apply(style_kolejka, axis=1), 
-            use_container_width=True, 
-            hide_index=True
-        )
-        
-        if st.button("USUŃ WSZYSTKIE ZAMÓWIENIA", type="secondary"):
+        st.dataframe(df_edit[['kraj', 'art', 'ile', 'start_produkcji', 'termin']].style.apply(style_kolejka, axis=1), use_container_width=True, hide_index=True)
+        if st.button("USUŃ WSZYSTKIE ZAMÓWIENIA"):
             st.session_state.kolejka = []
             zapisz_dane([])
             st.rerun()
@@ -157,41 +150,42 @@ with tab2:
     if st.session_state.kolejka:
         dni_plan, raport_raw = generuj_plan_finalny(st.session_state.kolejka)
         if not dni_plan:
-            st.warning("Błąd generowania planu.")
+            st.warning("Brak planu do wyświetlenia.")
         else:
-            kafelki = st.columns(5)
-            for i, dk in enumerate(dni_plan.keys()):
-                with kafelki[i % 5]:
+            # Sortujemy daty, by szły po kolei
+            dni_posortowane = sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
+            
+            grid = st.columns(5)
+            for i, dk in enumerate(dni_posortowane):
+                with grid[i % 5]:
                     d_info = dni_plan[dk]
-                    karta_html = f"""
-                    <div class="karta-dnia">
-                        <div style="font-size: 20px; font-weight: bold; color: #1B5E20; border-bottom: 2px solid #EEE; margin-bottom: 10px;">
-                            {dk} ({d_info['dz']})
-                        </div>
-                        <div style="font-size: 14px; color: #2E7D32; font-weight: bold; margin-bottom: 15px;">
-                            SUMA: {int(d_info['suma'])} palet
-                        </div>
-                    """
+                    
+                    # BUDOWANIE KARTY BEZ WCIĘĆ (żeby Streamlit nie traktował tego jako kod)
+                    karta_html = f'<div class="karta-dnia">'
+                    karta_html += f'<div style="font-size: 18px; font-weight: bold; color: #1B5E20; border-bottom: 2px solid #EEE; margin-bottom: 8px;">{dk} ({d_info["dz"]})</div>'
+                    karta_html += f'<div style="font-size: 14px; color: #2E7D32; font-weight: bold; margin-bottom: 12px;">SUMA: {int(d_info["suma"])} palet</div>'
+                    
                     for p in d_info['p']:
                         is_sk = p['Kraj'] == "Słowacja"
                         bg = "#A5D6A7" if is_sk else "#F1F1F1"
                         brd = "#2E7D32" if is_sk else "#CCC"
                         fnt = "#1B5E20" if is_sk else "#333"
-                        karta_html += f"""
-                        <div style="background-color: {bg}; border: 1px solid {brd}; border-radius: 6px; padding: 8px; margin-bottom: 8px; font-size: 13px; color: {fnt};">
-                            <b>Art {p['Art']}</b> — <b>{int(p['Palety'])} pal.</b><br>
-                            <span style="font-size: 11px; opacity: 0.8;">Wysyłka: {p['Wysyłka']} ({p['Kraj']})</span>
-                        </div>
-                        """
-                    karta_html += "</div>"
+                        
+                        # Wpis artykułu
+                        karta_html += f'<div style="background-color: {bg}; border: 1px solid {brd}; border-radius: 6px; padding: 6px; margin-bottom: 6px; font-size: 12px; color: {fnt};">'
+                        karta_html += f'<b>Art {p["Art"]}</b> — <b>{int(p["Palety"])} pal.</b><br>'
+                        karta_html += f'<span style="font-size: 11px; opacity: 0.8;">Wysyłka: {p["Wysyłka"]} ({p["Kraj"]})</span>'
+                        karta_html += f'</div>'
+                    
+                    karta_html += '</div>'
                     st.markdown(karta_html, unsafe_allow_html=True)
 
             st.divider()
-            st.subheader("Lista zbiorcza (Kontrola)")
+            st.subheader("Lista zbiorcza")
             df_final = pd.DataFrame(raport_raw)
             if not df_final.empty:
                 def color_rows(row):
                     return ['background-color: #C8E6C9' if row.Kraj == 'Słowacja' else ''] * len(row)
                 st.dataframe(df_final[['Data', 'Dzień', 'Art', 'Palety', 'Kraj', 'Wysyłka']].style.apply(color_rows, axis=1), use_container_width=True, hide_index=True)
     else:
-        st.warning("Baza zamówień jest pusta.")
+        st.warning("Najpierw wpisz zamówienia.")
