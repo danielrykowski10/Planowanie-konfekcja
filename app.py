@@ -1,201 +1,267 @@
 import streamlit as st
-import streamlit.components.v1 as components
+import datetime
+import pandas as pd
+import json
+import os
 
 # --- KONFIGURACJA ---
-st.set_page_config(page_title="MR Therapy", page_icon="🌿", layout="centered")
+PLIK_DANYCH = "dane_zamowien.json"
+st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
-# --- LUKSUSOWY DESIGN (CSS) ---
-st.markdown(f"""
+# Stylizacja
+st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400&display=swap');
-
-    /* Kolory i Tło */
-    .stApp {{
-        background-color: #FDFBF7;
-        color: #5C4D43;
-    }}
-    
-    html, body, [data-testid="stSidebar"] {{
-        font-family: 'Lato', sans-serif;
-    }}
-
-    h1, h2, h3, .serif-text {{
-        font-family: 'Playfair Display', serif;
-        color: #4B3F36;
-    }}
-
-    /* iOS Tab Bar (Bottom) */
-    .nav-bar {{
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        background: rgba(253, 251, 247, 0.8);
-        backdrop-filter: blur(15px);
-        display: flex;
-        justify-content: space-around;
-        padding: 15px 0;
-        border-top: 1px solid rgba(212, 193, 179, 0.3);
-        z-index: 1000;
-    }}
-    
-    .nav-item {{
-        text-align: center;
-        color: #5C4D43;
-        font-size: 10px;
-        text-decoration: none;
-    }}
-
-    /* Karty Glassmorphism */
-    .glass-card {{
-        background: rgba(255, 255, 255, 0.4);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(212, 193, 179, 0.5);
-        border-radius: 20px;
-        padding: 20px;
-        margin-bottom: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-    }}
-
-    /* Wyzwanie 21 Dni - Siatka */
-    .grid-container {{
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 10px;
-        margin-top: 20px;
-    }}
-    .day-circle {{
-        width: 35px;
-        height: 35px;
-        border-radius: 50%;
-        border: 1px solid #D4C1B3;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 12px;
-        cursor: pointer;
-    }}
-    .day-done {{
-        background-color: #D4C1B3;
-        color: white;
-    }}
-
-    /* Ukrywanie standardowych elementów Streamlit */
-    #MainMenu, footer, header {{visibility: hidden;}}
+    .main { background-color: #F8F9FA; }
+    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        background-color: #f1f1f1;
+        border-radius: 8px 8px 0px 0px;
+        padding: 10px 20px;
+        font-weight: bold;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #2E7D32 !important;
+        color: white !important;
+    }
+    .karta-dnia {
+        border: 2px solid #2E7D32; 
+        border-radius: 12px; 
+        padding: 12px; 
+        background-color: white; 
+        margin-bottom: 20px;
+        box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+        height: auto; 
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- SESSION STATE (Nawigacja) ---
-if 'active_tab' not in st.session_state:
-    st.session_state.active_tab = "Pulpit"
-if 'challenge_progress' not in st.session_state:
-    st.session_state.challenge_progress = [False] * 21
+# --- FUNKCJE DANYCH ---
+def wczytaj_dane():
+    if os.path.exists(PLIK_DANYCH):
+        try:
+            with open(PLIK_DANYCH, "r", encoding="utf-8") as f:
+                dane = json.load(f)
+                for z in dane:
+                    z['termin'] = datetime.datetime.strptime(z['termin'], "%Y-%m-%d").date()
+                    z['start_produkcji'] = datetime.datetime.strptime(z.get('start_produkcji', datetime.date.today().strftime("%Y-%m-%d")), "%Y-%m-%d").date()
+                return dane
+        except: return []
+    return []
 
-# --- MENU NAWIGACJI (Customowe przyciski symulujące Tab Bar) ---
-# Uwaga: Streamlit nie pozwala na łatwe przyciski w stałym footerze, 
-# więc używamy st.columns jako górnego lub bocznego menu, ale stylizujemy je.
+def zapisz_dane(kolejka):
+    kolejka_do_zapisu = []
+    for z in kolejka:
+        z_kopia = z.copy()
+        # Obsługa konwersji dat na stringi do JSON
+        if isinstance(z_kopia['termin'], datetime.date):
+            z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
+        if isinstance(z_kopia['start_produkcji'], datetime.date):
+            z_kopia['start_produkcji'] = z_kopia['start_produkcji'].strftime("%Y-%m-%d")
+        kolejka_do_zapisu.append(z_kopia)
+    with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
+        json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
 
-cols = st.columns(4)
-with cols[0]:
-    if st.button("🏠\nPulpit"): st.session_state.active_tab = "Pulpit"
-with cols[1]:
-    if st.button("📍\nDiagnoza"): st.session_state.active_tab = "Diagnoza"
-with cols[2]:
-    if st.button("📅\nWyzwanie"): st.session_state.active_tab = "Wyzwanie"
-with cols[3]:
-    if st.button("✨\nRytuał"): st.session_state.active_tab = "Rytuał"
+# --- PARAMETRY ---
+DNI_PL = {"Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa", "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"}
+WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
 
-st.markdown("---")
+# --- LOGIKA PLANOWANIA ---
+def generuj_plan_finalny(kolejka, pracujemy_w_niedziele):
+    if not kolejka: return {}, []
+    zadania = [dict(z) for z in kolejka]
+    plan_dni, raport, MAX_CZAS = {}, [], 840
+    data_dzis = datetime.date.today()
+    zadania.sort(key=lambda x: (x['termin'], x['art']))
 
-# --- LOGIKA EKRANÓW ---
+    for idx, z in enumerate(zadania):
+        ile = int(z['ile'])
+        wyd = WYDAJNOSC.get(str(z["art"]), 70)
+        data_k = max(data_dzis, z['start_produkcji'])
+        
+        while ile > 0:
+            # POMIJANIE NIEDZIELI (jeśli gzik w sidebarze jest wyłączony)
+            if not pracujemy_w_niedziele and data_k.weekday() == 6: 
+                data_k += datetime.timedelta(days=1)
+                continue
+                
+            d_key = data_k.strftime("%Y-%m-%d")
+            if d_key not in plan_dni: plan_dni[d_key] = MAX_CZAS
+            wolny_czas = plan_dni[d_key]
+            
+            if data_k == z['termin']:
+                zajete_juz = MAX_CZAS - wolny_czas
+                dostepny = max(0, 420 - zajete_juz)
+            else: dostepny = wolny_czas
+            
+            produkcja = min(dostepny // wyd, ile)
+            is_nad = False
+            if data_k == z['termin'] and ile > produkcja:
+                produkcja = ile
+                is_nad = True
 
-if st.session_state.active_tab == "Pulpit":
-    st.markdown("<h1 style='text-align: center;'>MR Therapy</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; font-style: italic;'>Zatrzymaj się. Poczyń przestrzeń dla siebie.</p>", unsafe_allow_html=True)
-    
-    st.image("https://images.unsplash.com/photo-1544161515-4ab6ce6db874?q=80&w=800&auto=format&fit=crop", use_container_width=True)
-    
-    with st.expander("🍃 Dźwięki relaksu (ASMR)"):
-        st.audio("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3") # Przykładowy relaksacyjny loop
-        st.caption("Włącz i poczuj spokój podczas przeglądania.")
+            if produkcja > 0:
+                przydatnosc_dt = data_k + datetime.timedelta(days=80)
+                raport.append({
+                    "Data": data_k.strftime("%d.%m"), 
+                    "Dzień": DNI_PL.get(data_k.strftime("%A")), 
+                    "Art": z["art"], 
+                    "Palety": int(produkcja), 
+                    "Kraj": z["kraj"], 
+                    "Wysyłka": z["termin"].strftime("%d.%m"), 
+                    "Przydatność": przydatnosc_dt.strftime("%d.%m.%y"),
+                    "dt_s": data_k, 
+                    "nad": is_nad,
+                    "orig_idx": idx 
+                })
+                ile -= produkcja
+                plan_dni[d_key] -= (produkcja * wyd)
+                if ile > 0: plan_dni[d_key] = 0
+            if ile > 0: data_k += datetime.timedelta(days=1)
+            
+    widok = {}
+    raport_sorted = sorted(raport, key=lambda x: x['dt_s'])
+    for r in raport_sorted:
+        dk = r['Data']
+        if dk not in widok: 
+            widok[dk] = {"dz": r['Dzień'], "p": [], "suma": 0, "czas_suma": 0, "ma_nad": False, "data_przydatnosci": r["Przydatność"]}
+        widok[dk]["p"].append(r)
+        widok[dk]["suma"] += r["Palety"]
+        widok[dk]["czas_suma"] += r["Palety"] * WYDAJNOSC.get(str(r["Art"]), 70)
+        if r["nad"]: widok[dk]["ma_nad"] = True
+        
+    return widok, raport_sorted
 
-    st.markdown("""
-    <div class='glass-card'>
-        <h3 class='serif-text'>Regulacja dla dzieci</h3>
-        <p>Specjalistyczna pomoc w stanach przebodźcowania, tikach i problemach ze snem u najmłodszych.</p>
-    </div>
-    """, unsafe_allow_html=True)
+# --- START ---
+if 'kolejka' not in st.session_state:
+    st.session_state.kolejka = wczytaj_dane()
 
-    st.markdown("### Kontakt")
-    st.info("📍 Przasnysz, ul. Ostrołęcka 28\n\n📍 Olsztyn, ul. Jagiellońska 44b/6")
+# SIDEBAR - OPCJE
+with st.sidebar:
+    st.header("⚙️ Ustawienia")
+    pracujemy_w_niedziele = st.checkbox("Praca w niedziele", value=False, help="Zaznacz, jeśli system ma planować produkcję również w niedziele.")
+    st.divider()
 
-elif st.session_state.active_tab == "Diagnoza":
-    st.markdown("<h2 class='serif-text'>Interaktywna Mapa Twarzy</h2>", unsafe_allow_html=True)
-    st.write("Kliknij w obszar, aby dowiedzieć się, co mówi Twoje ciało.")
+tab1, tab2 = st.tabs(["📥 WPISYWANIE ZAMÓWIEŃ", "📋 GOTOWY HARMONOGRAM NA HALĘ"])
 
-    # Symulacja Mapy Twarzy za pomocą przycisków (Streamlit nie wspiera natywnie SVG click)
-    diag_col1, diag_col2 = st.columns(2)
-    
-    with diag_col1:
-        if st.button("Czoło: Centrum Kontroli"):
-            st.warning("**Czoło:** Tu kumulujesz nadmierną kontrolę. Spięte mięśnie to sygnał stresu dla mózgu. Rekomendacja: Facemodeling.")
-        if st.button("Żuchwa: Magazyn Stresu"):
-            st.warning("**Żuchwa:** Tu zapisują się niewypowiedziane emocje (Bruksizm). Rekomendacja: Terapia Transbukalna.")
-    
-    with diag_col2:
-        if st.button("Oczy: Lustro Zmęczenia"):
-            st.warning("**Oczy:** Zastoje limfy to brak oddechu w ciele. Rekomendacja: Kobido i drenaż.")
-        if st.button("Szyja: Fundament"):
-            st.warning("**Szyja:** Skrócone powięzi ściągają owal w dół. Rekomendacja: Estetyczna Rehabilitacja.")
+# --- OKIENKO 1: WPISYWANIE I EDYCJA ---
+with tab1:
+    st.subheader("Nowe Zamówienia")
+    with st.form("fm_nowe", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        f_kraj = c1.selectbox("Kierunek", ["Czechy", "Słowacja"])
+        f_start = c2.date_input("Kiedy można zacząć?", datetime.date.today())
+        f_wysylka = c3.date_input("Termin wyjazdu auta:", datetime.date.today() + datetime.timedelta(days=3))
+        st.write("Ilość palet per artykuł:")
+        cols_art = st.columns(5)
+        temp_list = []
+        for i, art_id in enumerate(WYDAJNOSC.keys()):
+            with cols_art[i % 5]:
+                val = st.number_input(f"Art {art_id}", min_value=0, step=1)
+                if val > 0: temp_list.append({"art": art_id, "ile": val, "termin": f_wysylka, "start_produkcji": f_start, "kraj": f_kraj})
+        if st.form_submit_button("ZAPISZ ZAMÓWIENIA", use_container_width=True):
+            st.session_state.kolejka.extend(temp_list)
+            zapisz_dane(st.session_state.kolejka)
+            st.rerun()
 
-elif st.session_state.active_tab == "Wyzwanie":
-    st.markdown("<h2 class='serif-text'>21 Dni Blasku</h2>", unsafe_allow_html=True)
-    st.write("Twoja droga do naturalnego liftingu. Odhaczaj wykonany rytuał każdego dnia.")
-    
-    # Renderowanie siatki wyzwania
-    cols_grid = st.columns(7)
-    for i in range(21):
-        with cols_grid[i % 7]:
-            label = f"Dzień {i+1}"
-            if st.session_state.challenge_progress[i]:
-                if st.button("✅", key=f"day_{i}"):
-                    st.session_state.challenge_progress[i] = False
+    st.divider()
+    st.subheader("Aktualna lista w kolejce (Edytuj bezpośrednio w tabeli)")
+    if st.session_state.kolejka:
+        df_edit = pd.DataFrame(st.session_state.kolejka)
+        
+        # Edytor danych
+        edited_df = st.data_editor(
+            df_edit,
+            column_order=("kraj", "art", "ile", "start_produkcji", "termin"),
+            column_config={
+                "ile": st.column_config.NumberColumn("Palety", min_value=1, step=1),
+                "start_produkcji": st.column_config.DateColumn("Start Produkcji"),
+                "termin": st.column_config.DateColumn("Termin Wysyłki", disabled=True),
+                "art": st.column_config.TextColumn("Artykuł", disabled=True),
+                "kraj": st.column_config.TextColumn("Kraj", disabled=True),
+            },
+            use_container_width=True,
+            hide_index=True,
+            key="kolejka_editor"
+        )
+        
+        # Logika zapisu zmian z edytora
+        if not edited_df.equals(df_edit):
+            edited_df['start_produkcji'] = pd.to_datetime(edited_df['start_produkcji']).dt.date
+            edited_df['termin'] = pd.to_datetime(edited_df['termin']).dt.date
+            st.session_state.kolejka = edited_df.to_dict('records')
+            zapisz_dane(st.session_state.kolejka)
+            st.rerun()
+
+        if st.button("USUŃ WSZYSTKIE ZAMÓWIENIA", type="secondary"):
+            st.session_state.kolejka = []
+            zapisz_dane([])
+            st.rerun()
+    else:
+        st.info("Brak zamówień.")
+
+# --- OKIENKO 2: HARMONOGRAM Z OPCJĄ NIEDZIELI ---
+with tab2:
+    st.subheader("Harmonogram Produkcji (Rozpiska na halę)")
+    if st.session_state.kolejka:
+        # PRZEKAZUJEMY STAN CHECKBOXA DO FUNKCJI
+        dni_plan, raport_raw = generuj_plan_finalny(st.session_state.kolejka, pracujemy_w_niedziele)
+        dni_posortowane = sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
+        
+        grid = st.columns(5)
+        for i, dk in enumerate(dni_posortowane):
+            with grid[i % 5]:
+                d_info = dni_plan[dk]
+                
+                is_nad = d_info["ma_nad"] or d_info["czas_suma"] > 840
+                color_header = "#E65100" if is_nad else "#1B5E20"
+                bg_header = "#FFF3E0" if is_nad else "#F1F8E9"
+
+                # Nagłówek
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #EEE; margin-bottom: 5px; padding-bottom: 5px;">
+                    <div style="font-size: 17px; font-weight: bold; color: {color_header};">{dk} ({d_info["dz"][:3]})</div>
+                    <div style="font-size: 12px; font-weight: bold; color: #d32f2f;">PRZ: {d_info["data_przydatnosci"]}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Przycisk usuwania
+                if st.button(f"🗑️ USUŃ DZIEŃ {dk}", key=f"del_day_{dk}", use_container_width=True):
+                    indices_to_remove = set(p['orig_idx'] for p in d_info['p'])
+                    st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in indices_to_remove]
+                    zapisz_dane(st.session_state.kolejka)
                     st.rerun()
-            else:
-                if st.button(f"{i+1}", key=f"day_{i}"):
-                    st.session_state.challenge_progress[i] = True
-                    st.rerun()
-    
-    progress = sum(st.session_state.challenge_progress)
-    st.progress(progress / 21)
-    st.write(f"Ukończono {progress} z 21 dni. Jesteś cudowna!")
 
-elif st.session_state.active_tab == "Rytuał":
-    st.markdown("<h2 class='serif-text'>Codzienny Rytuał</h2>", unsafe_allow_html=True)
-    
-    # Tryb Lustra - Realizacja techniczna w Streamlit przez Camera Input
-    show_mirror = st.toggle("✨ Włącz tryb lustra")
-    if show_mirror:
-        st.camera_input("Twoje lustro", label_visibility="collapsed")
-        st.caption("Widzisz siebie? Teraz naśladuj ruchy Magdy.")
+                # Logika godzin
+                if d_info["czas_suma"] <= 420:
+                    zmiany_txt = "⏱️ 1 zmiana"
+                    godziny = "06:00-15:00" if is_nad else "06:00-14:00"
+                else:
+                    zmiany_txt = "⏱️ 2 zmiany"
+                    godziny = "06:00-15:00, 15:00-23:00" if is_nad else "06:00-14:00, 14:00-22:00"
 
-    st.markdown("### Wybierz masaż na dziś:")
-    
-    tab1, tab2, tab3 = st.tabs(["Head Spa", "Facemodeling", "Babuu"])
-    
-    with tab1:
-        st.video("https://www.instagram.com/reel/DImUV4FNw_F/")
-        st.markdown("[Poczuj rozluźnienie na Instagramie →](https://www.instagram.com/reel/DImUV4FNw_F/)")
-    with tab2:
-        st.video("https://www.instagram.com/reel/DI1Xfx7NfT7/")
-    with tab3:
-        st.video("https://www.instagram.com/reel/DIO8P4-tjrv/")
+                karta_html = f'<div class="karta-dnia" style="border-color: {color_header};">'
+                karta_html += f'<div style="background-color: {bg_header}; padding: 5px; border-radius: 5px; margin-bottom: 10px;">'
+                karta_html += f'<span style="font-size: 14px; font-weight: bold; color: #000;">SUMA: {int(d_info["suma"])} palet</span><br>'
+                karta_html += f'<span style="font-size: 13px; font-weight: bold; color: #FF0000;">{zmiany_txt} ({godziny})</span>'
+                karta_html += '</div>'
+                
+                for p in d_info['p']:
+                    is_sk = p['Kraj'] == "Słowacja"
+                    bg = "#A5D6A7" if is_sk else "#F1F1F1"
+                    brd = "#2E7D32" if is_sk else "#CCC"
+                    karta_html += f'<div style="background-color: {bg}; border: 1px solid {brd}; border-radius: 6px; padding: 6px; margin-bottom: 6px; font-size: 12px; color: #000;">'
+                    karta_html += f'Art {p["Art"]} — <b style="font-size: 13px; color: #000;">{int(p["Palety"])} pal.</b><br>'
+                    karta_html += f'<span style="font-size: 11px; color: #000;">Wysyłka: {p["Wysyłka"]} ({p["Kraj"]})</span>'
+                    karta_html += f'</div>'
+                
+                karta_html += '</div>'
+                st.markdown(karta_html, unsafe_allow_html=True)
 
-# --- FOOTER ---
-st.markdown("<br><br><br>", unsafe_allow_html=True)
-st.markdown("""
-    <div style='text-align: center; color: #A98D80; font-size: 12px;'>
-        MR Therapy | Magdalena Rykowska<br>
-        Instagram: @mr__therapy_ | Facebook: MrtherapyMagdalenaRykowska
-    </div>
-""", unsafe_allow_html=True)
+        st.divider()
+        st.subheader("Lista zbiorcza")
+        df_final = pd.DataFrame(raport_raw)
+        if not df_final.empty:
+            st.dataframe(df_final[['Data', 'Dzień', 'Art', 'Palety', 'Kraj', 'Wysyłka', 'Przydatność']].style.apply(lambda r: ['background-color: #C8E6C9' if r.Kraj == 'Słowacja' else ''] * len(r), axis=1), use_container_width=True, hide_index=True)
+    else:
+        st.warning("Baza zamówień jest pusta.")
