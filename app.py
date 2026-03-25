@@ -8,7 +8,7 @@ import os
 PLIK_DANYCH = "dane_zamowien.json"
 st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
-# Stylizacja - Poprawiona, by karty były czytelne
+# Stylizacja - USUNIĘTO min-height, dodano automatyczne dopasowanie
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -31,7 +31,8 @@ st.markdown("""
         background-color: white; 
         margin-bottom: 20px;
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
-        min-height: 300px;
+        /* Karta dopasowuje się do zawartości */
+        height: auto; 
     }
     </style>
 """, unsafe_allow_html=True)
@@ -152,7 +153,6 @@ with tab2:
         if not dni_plan:
             st.warning("Brak planu do wyświetlenia.")
         else:
-            # Sortujemy daty, by szły po kolei
             dni_posortowane = sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
             
             grid = st.columns(5)
@@ -160,7 +160,6 @@ with tab2:
                 with grid[i % 5]:
                     d_info = dni_plan[dk]
                     
-                    # BUDOWANIE KARTY BEZ WCIĘĆ (żeby Streamlit nie traktował tego jako kod)
                     karta_html = f'<div class="karta-dnia">'
                     karta_html += f'<div style="font-size: 18px; font-weight: bold; color: #1B5E20; border-bottom: 2px solid #EEE; margin-bottom: 8px;">{dk} ({d_info["dz"]})</div>'
                     karta_html += f'<div style="font-size: 14px; color: #2E7D32; font-weight: bold; margin-bottom: 12px;">SUMA: {int(d_info["suma"])} palet</div>'
@@ -171,7 +170,6 @@ with tab2:
                         brd = "#2E7D32" if is_sk else "#CCC"
                         fnt = "#1B5E20" if is_sk else "#333"
                         
-                        # Wpis artykułu
                         karta_html += f'<div style="background-color: {bg}; border: 1px solid {brd}; border-radius: 6px; padding: 6px; margin-bottom: 6px; font-size: 12px; color: {fnt};">'
                         karta_html += f'<b>Art {p["Art"]}</b> — <b>{int(p["Palety"])} pal.</b><br>'
                         karta_html += f'<span style="font-size: 11px; opacity: 0.8;">Wysyłka: {p["Wysyłka"]} ({p["Kraj"]})</span>'
@@ -189,3 +187,4 @@ with tab2:
                 st.dataframe(df_final[['Data', 'Dzień', 'Art', 'Palety', 'Kraj', 'Wysyłka']].style.apply(color_rows, axis=1), use_container_width=True, hide_index=True)
     else:
         st.warning("Najpierw wpisz zamówienia.")
+        
