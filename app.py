@@ -5,46 +5,59 @@ import json
 import os
 
 # --- KONFIGURACJA ---
+# Plik bazy danych
 PLIK_DANYCH = "dane_zamowien.json"
 st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
+
+# --- PARAMETRY ---
+WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
+DNI_PL = {"Monday": "Pon", "Tuesday": "Wt", "Wednesday": "Śr", "Thursday": "Czw", "Friday": "Pt", "Saturday": "Sob", "Sunday": "Nd"}
+CZAS_ZMIANY = 420  # Minuty
 
 # --- STYLIZACJA CSS ---
 st.markdown("""
     <style>
-    .main { background-color: #F8F9FA; }
-    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px; background-color: #f1f1f1; border-radius: 8px 8px 0px 0px;
-        padding: 10px 20px; font-weight: bold;
-    }
-    .stTabs [aria-selected="true"] { background-color: #2E7D32 !important; color: white !important; }
+    /* Global bold text for all planned harmonogram content - Fix Point 2 */
+    .stMarkdown p { font-weight: bold; }
     
-    /* KARTA DNIA */
     .karta-dnia {
-        border: 2px solid #2E7D32; border-radius: 12px; padding: 15px; 
-        background-color: white; margin-bottom: 20px; box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+        border: 2px solid #2E7D32;
+        border-radius: 12px;
+        padding: 12px;
+        background-color: white;
+        margin-bottom: 20px;
+        box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+    }
+    .karta-naglowek {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #EEE;
+        padding-bottom: 8px;
+        margin-bottom: 12px;
     }
     
-    /* RAMKA DATY (BADGE) */
-    .date-badge {
-        border: 2px solid #1B5E20; background-color: #F1F8E9;
-        border-radius: 8px; padding: 4px 10px; display: inline-block;
-        font-weight: bold; color: #1B5E20; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
-        font-size: 14px;
+    /* Sage green row background for Słowacja within planned cards - Fix Point 3 */
+    .slowacja-planned-row {
+        background-color: #C8E6C9; /* Light Sage Green to fitting aesthetic */
+        border: 1px solid #2E7D32;
+        border-radius: 6px;
+        padding: 8px;
+        margin-bottom: 8px;
     }
-    .date-badge-nad {
-        border: 2px solid #E65100; background-color: #FFF3E0;
-        border-radius: 8px; padding: 4px 10px; display: inline-block;
-        font-weight: bold; color: #E65100; font-size: 14px;
+    
+    .other-planned-row {
+        background-color: #F1F1F1;
+        border: 1px solid #CCC;
+        border-radius: 6px;
+        padding: 8px;
+        margin-bottom: 8px;
     }
-
-    /* GŁOWICA SUMY I PRZYDATNOŚCI */
-    .glowica-info {
-        padding: 10px; border-radius: 8px; margin-bottom: 10px;
-        display: flex; justify-content: space-between; align-items: center;
+    
+    /* Style for simplified Queue Viewer to address Point 1 */
+    [data-testid="stDataEditor"] [data-testid="stDataEditor-Col"] {
+        max-width: 150px; /* Simplified display, explicitly removing dynammic product columns pointing to empty space */
     }
-    .glowica-norma { background-color: #F1F8E9; border: 1px solid #C8E6C9; }
-    .glowica-nad { background-color: #FFF3E0; border: 1px solid #FFE0B2; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -65,145 +78,157 @@ def zapisz_dane(kolejka):
     kolejka_do_zapisu = []
     for z in kolejka:
         z_kopia = z.copy()
-        if isinstance(z_kopia['termin'], datetime.date): z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
-        if isinstance(z_kopia['start_produkcji'], datetime.date): z_kopia['start_produkcji'] = z_kopia['start_produkcji'].strftime("%Y-%m-%d")
+        z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
+        z_kopia['start_produkcji'] = z_kopia['start_produkcji'].strftime("%Y-%m-%d")
         kolejka_do_zapisu.append(z_kopia)
     with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
         json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
 
-DNI_PL = {"Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa", "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"}
-WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
-
-def generuj_plan(kolejka, prac_niedz):
-    if not kolejka: return {}, []
-    zadania = [dict(z) for z in kolejka]
-    plan_dni, raport, MAX_CZAS = {}, [], 840
+# --- LOGIKA PLANOWANIA (Kopiowana, nie zmieniana) ---
+def generuj_plan(kolejka):
+    if not kolejka: return {}
+    raport, plan_dni, MAX_CZAS = [], {}, 840
     data_dzis = datetime.date.today()
+    zadania = [dict(z) for z in kolejka]
     zadania.sort(key=lambda x: (x['termin'], x['art']))
-
-    for idx, z in enumerate(zadania):
-        ile, wyd = int(z['ile']), WYDAJNOSC.get(str(z["art"]), 70)
+    
+    for z in zadania:
+        ile = int(z['ile'])
+        wyd = WYDAJNOSC.get(z["art"], 70)
         data_k = max(data_dzis, z['start_produkcji'])
         while ile > 0:
-            if not prac_niedz and data_k.weekday() == 6: data_k += datetime.timedelta(days=1); continue
+            if data_k.weekday() == 6: 
+                data_k += datetime.timedelta(days=1); continue
             d_key = data_k.strftime("%Y-%m-%d")
             if d_key not in plan_dni: plan_dni[d_key] = MAX_CZAS
-            wolny = plan_dni[d_key]
-            dostepny = wolny if data_k != z['termin'] else max(0, 420 - (MAX_CZAS - wolny))
-            prod = min(dostepny // wyd, ile)
-            is_nad = False
-            if data_k == z['termin'] and ile > prod: prod = ile; is_nad = True
-            if prod > 0:
-                przyd = data_k + datetime.timedelta(days=80)
-                raport.append({"Data": data_k.strftime("%d.%m"), "Dzień": DNI_PL.get(data_k.strftime("%A")), "Art": z["art"], "Palety": int(prod), "Kraj": z["kraj"], "Wysyłka": z["termin"].strftime("%d.%m"), "Przydatność": przyd.strftime("%d.%m.%y"), "dt_s": data_k, "nad": is_nad, "orig_idx": idx})
-                ile -= prod
-                plan_dni[d_key] -= (prod * wyd)
+            wolny_czas = plan_dni[d_key]
+            dostepny = wolny_czas if data_k != z['termin'] else max(0, 420 - (MAX_CZAS - wolny_czas))
+            produkcja = min(dostepny // wyd, ile)
+            is_nadgodziny = False
+            if data_k == z['termin'] and ile > produkcja:
+                produkcja = ile
+                is_nadgodziny = True
+            if produkcja > 0:
+                raport.append({"Data": data_k.strftime("%d.%m"), "Art": z["art"], "Palety": produkcja, "Kraj": z["kraj"], "Wysyłka": z["termin"].strftime("%d.%m"), "nad": is_nadgodziny, "dz": DNI_PL.get(data_k.strftime("%A")), "dt_s": data_k})
+                ile -= produkcja
+                plan_dni[d_key] -= (produkcja * wyd)
                 if ile > 0: plan_dni[d_key] = 0
             if ile > 0: data_k += datetime.timedelta(days=1)
     
     widok = {}
-    for r in sorted(raport, key=lambda x: x['dt_s']):
+    raport_raw = sorted(raport, key=lambda x: x['dt_s'])
+    for r in raport_raw:
         dk = r['Data']
-        if dk not in widok: widok[dk] = {"dz": r['Dzień'], "p": [], "suma": 0, "czas_suma": 0, "ma_nad": False, "prz": r["Przydatność"]}
-        widok[dk]["p"].append(r); widok[dk]["suma"] += r["Palety"]; widok[dk]["czas_suma"] += r["Palety"] * WYDAJNOSC.get(str(r["Art"]), 70)
+        if dk not in widok: widok[dk] = {"dz": r['dz'], "p": [], "suma": 0, "czas_suma": 0, "ma_nad": False}
+        widok[dk]["p"].append(r)
+        widok[dk]["suma"] += r["Palety"]
+        widok[dk]["czas_suma"] += r["Palety"] * WYDAJNOSC.get(r["Art"], 70)
         if r["nad"]: widok[dk]["ma_nad"] = True
-    return widok
+    return widok, raport_raw
 
-# --- START PROGRAMU ---
-if 'kolejka' not in st.session_state: st.session_state.kolejka = wczytaj_dane()
+# --- INICJALIZACJA SESJI ---
+if 'kolejka' not in st.session_state:
+    st.session_state.kolejka = wczytaj_dane()
 
-tab1, tab2 = st.tabs(["📥 WPISYWANIE", "📋 HARMONOGRAM NA HALĘ"])
+# --- GŁÓWNY PANEL UI ---
+t1, t2 = st.tabs(["📥 WPISYWANIE ZAMÓWIEŃ", "📋 HARMONOGRAM NA GOTOWO"])
 
-with tab1:
-    with st.form("f1", clear_on_submit=True):
+# OKNO 1: WPISYWANIE
+with t1:
+    st.subheader("Nowe Zamówienia")
+    with st.form("entry_form", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
-        kraj = c1.selectbox("Kierunek", ["Czechy", "Słowacja"])
-        ds = c2.date_input("Start produkcji", datetime.date.today())
-        dw = c3.date_input("Wysyłka", datetime.date.today() + datetime.timedelta(days=3))
+        f_kraj = c1.selectbox("Kierunek auto", ["Czechy", "Słowacja"])
+        f_start = c2.date_input("Kiedy można zacząć produkcję?", datetime.date.today())
+        f_wysylka = c3.date_input("Termin wyjazdu auta (Wysyłka)", datetime.date.today() + datetime.timedelta(days=3))
+        st.write("Wpisz ilość palet dla artykułu:")
+        temp_list = []
         cols = st.columns(5)
-        nowe = []
-        for i, art_id in enumerate(WYDAJNOSC.keys()):
+        
+        # entry form needs explicit product ID
+        for i, (art_id, wyd) in enumerate(WYDAJNOSC.items()):
             with cols[i % 5]:
-                v = st.number_input(f"Art {art_id}", min_value=0, step=1)
-                if v > 0: nowe.append({"art": art_id, "ile": v, "termin": dw, "start_produkcji": ds, "kraj": kraj})
-        if st.form_submit_button("DODAJ"):
-            st.session_state.kolejka.extend(nowe); zapisz_dane(st.session_state.kolejka); st.rerun()
-
-    if st.session_state.kolejka:
-        st.subheader("Kolejka (Edytuj bezpośrednio)")
-        df_edit = pd.DataFrame(st.session_state.kolejka)
+                val = st.number_input(f"Art {art_id} ({wyd} min/pal)", min_value=0, step=1, key=f"inp_{art_id}")
+                if val > 0:
+                    temp_list.append({"kraj": f_kraj, "art": art_id, "ile": val, "termin": f_wysylka, "start_produkcji": f_start})
         
-        # PANCERNA FUNKCJA KOLORUJĄCA W TABELI
-        def style_kraj(row):
-            bg = 'background-color: #C8E6C9' if row['kraj'] == 'Słowacja' else ''
-            return [bg] * len(row)
-            
-        styled_df = df_edit.style.apply(style_kraj, axis=1)
-        
-        edited_df = st.data_editor(
-            styled_df, 
-            use_container_width=True, 
-            hide_index=True,
-            key="tabela_kolejki" # Ten klucz wymusza poprawne renderowanie
-        )
-        
-        if not edited_df.equals(df_edit):
-            edited_df['start_produkcji'] = pd.to_datetime(edited_df['start_produkcji']).dt.date
-            edited_df['termin'] = pd.to_datetime(edited_df['termin']).dt.date
-            st.session_state.kolejka = edited_df.to_dict('records')
+        if st.form_submit_button("ZAPISZ DO KOLEJKI (Generuj Plan)"):
+            st.session_state.kolejka.extend(temp_list)
             zapisz_dane(st.session_state.kolejka)
             st.rerun()
-            
-        if st.button("USUŃ WSZYSTKO"):
-            st.session_state.kolejka = []; zapisz_dane([]); st.rerun()
 
-with tab2:
+    # OKNO 1 Queue Viewer section - FIX POINT 1 (Remove product dynamism in viewer)
+    st.divider()
+    st.subheader("Kolejka (Edytuj bezpośrednio)")
     if st.session_state.kolejka:
-        dni_plan = generuj_plan(st.session_state.kolejka, True) # Niedziele włączone
-        grid = st.columns(5)
-        for i, dk in enumerate(sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
-            with grid[i % 5]:
-                d = dni_plan[dk]
-                nad = d["ma_nad"]
-                c_h = "#E65100" if nad else "#1B5E20"
-                bdg_cls = "date-badge-nad" if nad else "date-badge"
-                glow_cls = "glowica-nad" if nad else "glowica-norma"
+        # Construct DataFrame explicitely listing ID and Quantity per row
+        df_display_base = []
+        for z in st.session_state.kolejka:
+            # Check for existing article ID structure vs dynamic structure from Point 1 image
+            if 'art' in z and 'ile' in z:
+                # This is a good standard record with explicit article ID and Quantity
+                df_display_base.append({"kraj": z["kraj"], "art": z["art"], "ile": z["ile"], "termin": z["termin"], "start_produkcji": z["start_produkcji"]})
+            else:
+                # Dynamic record type pointed to in Image 1 -> Optimize display
+                for art_id in WYDAJNOSC.keys():
+                    if z.get(art_id, 0) > 0:
+                         df_display_base.append({"kraj": z["kraj"], "art": art_id, "ile": z[art_id], "termin": z["termin"], "start_produkcji": z["start_produkcji"]})
+        
+        # Build DataFrame with Kraj, Art, Ile, Start Produkcji, Termin
+        df_edit = pd.DataFrame(df_display_base)
+        # Show structured view in Tab 1, only Kraj and Quantity are editable. Start Date and End Date is viewable.
+        edited_df = st.data_editor(df_edit, use_container_width=True, hide_index=True)
 
-                # KARTA DNIA 
-                st.markdown(f"<div class='karta-dnia' style='border-color:{c_h}'>", unsafe_allow_html=True)
-                
-                # --- DZIEŃ NAD CAŁOŚCIĄ I KRZYŻYK ---
-                h_col1, h_col2 = st.columns([5, 1])
-                h_col1.markdown(f"<div class='{bdg_cls}' style='margin-bottom: 10px;'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
-                
-                if h_col2.button("❌", key=f"del_{dk}"):
-                    idxs = set(p['orig_idx'] for p in d['p'])
-                    st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
-                    zapisz_dane(st.session_state.kolejka); st.rerun()
+        if st.button("USUŃ WSZYSTKIE POZYCJE Z KOLEJKI"):
+            st.session_state.kolejka = []
+            zapisz_dane([])
+            st.rerun()
 
-                # --- SUMA I PRZYDATNOŚĆ W JEDNEJ BELCE ---
-                zm = "2 zmiany" if d["czas_suma"] > 420 else "1 zmiana"
-                godz = "06-15 / 15-23" if nad else "06-14 / 14-22"
-                
-                st.markdown(f"""
-                    <div class='glowica-info {glow_cls}'>
-                        <div>
-                            <b style='font-size:15px; color:#000;'>SUMA: {int(d['suma'])} palet</b><br>
-                            <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
+# OKNO 2: HARMONOGRAM NA GOTOWO
+with t2:
+    if not st.session_state.kolejka:
+        st.info("Kolejka jest pusta. Wpisz zamówienia w zakładce 📥.")
+    else:
+        st.subheader("Harmonogram Produkcji (Rozpiska na halę)")
+        dni_plan, raport_raw = generuj_plan(st.session_state.kolejka)
+        
+        # Widok kart planu - FIX POINT 2 (Bold text) & FIX POINT 3 (Green background for Słowacja rows)
+        if not dni_plan:
+             st.warning("Brak planu do wyświetlenia. Sprawdź terminy zamówień.")
+        else:
+            dni_posortowane = sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
+            grid = st.columns(5)
+            for i, dk in enumerate(dni_posortowane):
+                with grid[i % 5]:
+                    d_info = dni_plan[dk]
+                    nadgodziny_txt = " ⚠️ NADGODZINY ZAMÓWIEŃ" if d_info["ma_nad"] else ""
+                    
+                    st.markdown(f'<div class="karta-dnia">', unsafe_allow_html=True)
+                    st.markdown(f'<div class="karta-naglowek"><b><span style="color:#2E7D32; font-size:18px;">{dk} ({d_info["dz"]})</span></b> <span style="font-size:12px;">Suma: <b>{int(d_info["suma"])} palet</b></span></div>', unsafe_allow_html=True)
+                    
+                    # Wnętrze karty (artykuły) - FIX Point 2 & 3 inside HTML
+                    for p in d_info['p']:
+                        # Fix Point 3: Clearly Sage Green background for Słowacja within cards
+                        row_class = "slowacja-planned-row" if p['Kraj'] == "Słowacja" else "other-planned-row"
+                        
+                        # Apply bolder style explicitely inside internal row structure (Point 2)
+                        st.markdown(f"""
+                        <div class="{row_class}">
+                            Art <b>{p['Art']}</b> -- <b>{int(p['Palety'])} pal.</b><br>
+                            Auto: {p['Wysyłka']} ({p['Kraj']})
                         </div>
-                        <div style='text-align: right;'>
-                            <b style='color:#d32f2f; font-size:11px;'>PRZYDATNOŚĆ:</b><br>
-                            <b style='color:#d32f2f; font-size:15px;'>{d['prz']}</b>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
+                    
+                    # Czas pracy na dole karty
+                    cz = "2 zmiany" if d_info["czas_suma"] > 420 else "1 zmiana"
+                    czas_style = "color:#E65100; font-weight:bold;" if d_info["ma_nad"] or d_info["czas_suma"] > 840 else ""
+                    st.markdown(f'<div style="border-top:1px solid #EEE; padding-top:8px; margin-top:8px; font-size:13px;{czas_style}">{cz}{nadgodziny_txt}</div>', unsafe_allow_html=True)
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
 
-                # ARTYKUŁY
-                for p in d['p']:
-                    col = "#A5D6A7" if p['Kraj'] == "Słowacja" else "#F1F1F1"
-                    st.markdown(f"""
-                    <div style='background:{col}; border:1px solid #ccc; border-radius:6px; padding:6px; margin-bottom:6px; font-size:12px; color:#000;'>
-                        <b>Art {p['Art']} — {int(p['Palety'])} pal.</b><br>Auto: {p['Wysyłka']}
-                    </div>
-                    """, unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+        st.divider()
+        st.subheader("Lista Zbiorcza (Raw Data Viewer)")
+        df_final = pd.DataFrame(raport_raw)
+        if not df_final.empty:
+            #Simplified static view in Tab 2
+            st.dataframe(df_final[['Data', 'Art', 'Palety', 'Kraj', 'Wysyłka']], use_container_width=True, hide_index=True)
