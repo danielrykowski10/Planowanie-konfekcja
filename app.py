@@ -8,7 +8,7 @@ import os
 PLIK_DANYCH = "dane_zamowien.json"
 st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
-# --- STYLIZACJA: JEDNA RAMKA NAGŁÓWKOWA ---
+# --- STYLIZACJA ---
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -33,29 +33,24 @@ st.markdown("""
         margin-bottom: 20px;
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
     }
-    /* ZINTEGROWANA GŁOWICA (JEDNA RAMKA) */
-    .glowica-karty {
-        padding: 10px;
-        border-radius: 10px;
-        margin-bottom: 10px;
-    }
-    .glowica-norma { background-color: #F1F8E9; border: 1px solid #C8E6C9; }
-    .glowica-nad { background-color: #FFF3E0; border: 1px solid #FFE0B2; }
-
-    /* BADGE DATY */
+    /* RAMKA DATY (BADGE) */
     .date-badge {
-        background-color: #1B5E20;
-        color: white;
-        border-radius: 6px;
-        padding: 2px 8px;
-        font-size: 13px;
+        border: 2px solid #1B5E20;
+        background-color: #F1F8E9;
+        border-radius: 8px;
+        padding: 4px 10px;
+        display: inline-block;
+        font-weight: bold;
+        color: #1B5E20;
     }
     .date-badge-nad {
-        background-color: #E65100;
-        color: white;
-        border-radius: 6px;
-        padding: 2px 8px;
-        font-size: 13px;
+        border: 2px solid #E65100;
+        background-color: #FFF3E0;
+        border-radius: 8px;
+        padding: 4px 10px;
+        display: inline-block;
+        font-weight: bold;
+        color: #E65100;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -86,6 +81,7 @@ def zapisz_dane(kolejka):
 DNI_PL = {"Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa", "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"}
 WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
 
+# --- LOGIKA PLANOWANIA ---
 def generuj_plan_finalny(kolejka, pracujemy_niedziela):
     if not kolejka: return {}, []
     zadania = [dict(z) for z in kolejka]
@@ -124,13 +120,14 @@ def generuj_plan_finalny(kolejka, pracujemy_niedziela):
         if r["nad"]: widok[dk]["ma_nad"] = True
     return widok, raport
 
-# --- PROGRAM ---
+# --- PROGRAM GŁÓWNY ---
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = wczytaj_dane()
 
 with st.sidebar:
     st.header("⚙️ OPCJE")
-    prac_niedz = st.checkbox("Praca w Niedziele", value=True)
+    pracujemy_niedziela = st.checkbox("Planuj pracę w Niedziele", value=True)
+    st.divider()
 
 t1, t2 = st.tabs(["📥 WPISYWANIE", "📋 HARMONOGRAM NA HALĘ"])
 
@@ -146,55 +143,57 @@ with t1:
             with cols[i % 5]:
                 v = st.number_input(f"Art {art_id}", min_value=0, step=1)
                 if v > 0: nowe.append({"art": art_id, "ile": v, "termin": dw, "start_produkcji": ds, "kraj": kraj})
-        if st.form_submit_button("DODAJ"):
+        if st.form_submit_button("DODAJ DO KOLEJKI"):
             st.session_state.kolejka.extend(nowe); zapisz_dane(st.session_state.kolejka); st.rerun()
-    st.data_editor(pd.DataFrame(st.session_state.kolejka), use_container_width=True, hide_index=True)
+
+    if st.session_state.kolejka:
+        st.subheader("Kolejka (Edytuj bezpośrednio)")
+        df_edit = pd.DataFrame(st.session_state.kolejka)
+        def style_sk(row):
+            return ['background-color: #C8E6C9' if row.kraj == 'Słowacja' else ''] * len(row)
+        st.data_editor(df_edit.style.apply(style_sk, axis=1), use_container_width=True, hide_index=True)
+        if st.button("USUŃ WSZYSTKO"):
+            st.session_state.kolejka = []; zapisz_dane([]); st.rerun()
 
 with t2:
     if st.session_state.kolejka:
-        dni_plan, _ = generuj_plan_finalny(st.session_state.kolejka, prac_niedz)
+        dni_plan, _ = generuj_plan_finalny(st.session_state.kolejka, pracujemy_niedziela)
         grid = st.columns(5)
         for i, dk in enumerate(sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
             with grid[i % 5]:
                 d = dni_plan[dk]
                 nad = d["ma_nad"] or d["czas_suma"] > 840
                 c_h = "#E65100" if nad else "#1B5E20"
-                glow_cls = "glowica-nad" if nad else "glowica-norma"
-                bdg_cls = "date-badge-nad" if nad else "date-badge"
-
-                # JEDNA RAMKA (KARTA)
-                st.markdown(f"<div class='karta-dnia' style='border-color:{c_h}'>", unsafe_allow_html=True)
+                badge_class = "date-badge-nad" if nad else "date-badge"
                 
-                # --- ZINTEGROWANA GŁOWICA (Row 1 i Row 2 razem) ---
-                st.markdown(f"<div class='{glow_cls}'>", unsafe_allow_html=True)
+                # --- ZUNIFIKOWANY NAGŁÓWEK (Data, Przydatność i X w jednym) ---
+                # Używamy kolumn Streamlit, ale bardzo ciasno ułożonych
+                header_cols = st.columns([5, 4, 1])
                 
-                c_top1, c_top2, c_top3 = st.columns([5, 4, 1])
-                c_top1.markdown(f"<span class='{bdg_cls}'>{dk} ({d['dz']})</span>", unsafe_allow_html=True)
-                c_top2.markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:13px; text-align:center;'>PRZ: {d['prz']}</div>", unsafe_allow_html=True)
-                if c_top3.button("❌", key=f"del_{dk}"):
+                # 1. Data porcjowania (w ramce)
+                header_cols[0].markdown(f"<div class='{badge_class}' style='font-size:13px;'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
+                
+                # 2. Data przydatności (pogrubiona)
+                header_cols[1].markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:13px; line-height:30px; text-align:center;'>PRZ: {d['prz']}</div>", unsafe_allow_html=True)
+                
+                # 3. Krzyżyk (X)
+                if header_cols[2].button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
                     zapisz_dane(st.session_state.kolejka); st.rerun()
 
-                # Podsumowanie w tej samej sekcji (Głowicy)
+                # --- TREŚĆ KARTY ---
                 zm = "2 zmiany" if d["czas_suma"] > 420 else "1 zmiana"
                 godz = "06-15 / 15-23" if nad else "06-14 / 14-22"
-                st.markdown(f"""
-                    <div style='margin-top:8px;'>
-                        <b style='font-size:15px; color:#000;'>SUMA: {int(d['suma'])} palet</b><br>
-                        <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
-                    </div>
-                """, unsafe_allow_html=True)
+                bg_h = "#FFF3E0" if nad else "#F1F8E9"
                 
-                st.markdown("</div>", unsafe_allow_html=True) # Zamknięcie głowicy
-
-                # ARTYKUŁY
+                html = f"""<div class='karta-dnia' style='border-color:{c_h}'>
+                <div style='background:{bg_h}; padding:5px; border-radius:5px; margin-bottom:10px;'>
+                <b>SUMA: {int(d['suma'])} palet</b><br>
+                <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
+                </div>"""
                 for p in d['p']:
                     col = "#A5D6A7" if p['Kraj'] == "Słowacja" else "#F1F1F1"
-                    st.markdown(f"""
-                    <div style='background:{col}; border:1px solid #ccc; border-radius:6px; padding:6px; margin-bottom:6px; font-size:12px; color:#000;'>
-                        <b>Art {p['Art']} — {int(p['Palety'])} pal.</b><br>Auto: {p['Wysyłka']}
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                st.markdown("</div>", unsafe_allow_html=True)
+                    html += f"<div style='background:{col}; border:1px solid #ccc; border-radius:5px; padding:5px; margin-bottom:5px; font-size:12px; color:#000;'>"
+                    html += f"<b>Art {p['Art']} — {int(p['Palety'])} pal.</b><br>Auto: {p['Wysyłka']}</div>"
+                st.markdown(html + "</div>", unsafe_allow_html=True)
