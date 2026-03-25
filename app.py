@@ -89,23 +89,12 @@ def generuj_plan_finalny(kolejka):
             
             produkcja = min(dostepny // wyd, ile)
             is_nad = False
-            
-            # Sprawdź czy potrzebne nadgodziny dla terminu
             if data_k == z['termin'] and ile > produkcja:
                 produkcja = ile
                 is_nad = True
 
             if produkcja > 0:
-                raport.append({
-                    "Data": data_k.strftime("%d.%m"), 
-                    "Dzień": DNI_PL.get(data_k.strftime("%A")), 
-                    "Art": z["art"], 
-                    "Palety": int(produkcja), 
-                    "Kraj": z["kraj"], 
-                    "Wysyłka": z["termin"].strftime("%d.%m"), 
-                    "dt_s": data_k,
-                    "nad": is_nad
-                })
+                raport.append({"Data": data_k.strftime("%d.%m"), "Dzień": DNI_PL.get(data_k.strftime("%A")), "Art": z["art"], "Palety": int(produkcja), "Kraj": z["kraj"], "Wysyłka": z["termin"].strftime("%d.%m"), "dt_s": data_k, "nad": is_nad})
                 ile -= produkcja
                 plan_dni[d_key] -= (produkcja * wyd)
                 if ile > 0: plan_dni[d_key] = 0
@@ -169,7 +158,7 @@ with tab2:
             with grid[i % 5]:
                 d_info = dni_plan[dk]
                 
-                # LOGIKA ZMIAN I GODZIN
+                # LOGIKA ZMIAN
                 is_nad = d_info["ma_nad"] or d_info["czas_suma"] > 840
                 if d_info["czas_suma"] <= 420:
                     zmiany_txt = "⏱️ 1 zmiana"
@@ -185,14 +174,16 @@ with tab2:
                 karta_html += f'<div style="font-size: 18px; font-weight: bold; color: {color_header}; border-bottom: 2px solid #EEE; margin-bottom: 5px;">{dk} ({d_info["dz"]})</div>'
                 karta_html += f'<div style="background-color: {bg_header}; padding: 5px; border-radius: 5px; margin-bottom: 10px;">'
                 karta_html += f'<span style="font-size: 14px; font-weight: bold; color: #000;">SUMA: {int(d_info["suma"])} palet</span><br>'
-                karta_html += f'<span style="font-size: 12px; font-weight: bold; color: {color_header};">{zmiany_txt} ({godziny})</span>'
+                
+                # ZMIANA TUTAJ: Czerwony kolor i pogrubienie dla zmian i godzin
+                karta_html += f'<span style="font-size: 13px; font-weight: bold; color: #FF0000;">{zmiany_txt} ({godziny})</span>'
+                
                 karta_html += '</div>'
                 
                 for p in d_info['p']:
                     is_sk = p['Kraj'] == "Słowacja"
                     bg = "#A5D6A7" if is_sk else "#F1F1F1"
                     brd = "#2E7D32" if is_sk else "#CCC"
-                    
                     karta_html += f'<div style="background-color: {bg}; border: 1px solid {brd}; border-radius: 6px; padding: 6px; margin-bottom: 6px; font-size: 12px; color: #000;">'
                     karta_html += f'Art {p["Art"]} — <b style="font-size: 13px; color: #000;">{int(p["Palety"])} pal.</b><br>'
                     karta_html += f'<span style="font-size: 11px; opacity: 0.9; color: #000;">Wysyłka: {p["Wysyłka"]} ({p["Kraj"]})</span>'
