@@ -53,8 +53,11 @@ def zapisz_dane(kolejka):
     kolejka_do_zapisu = []
     for z in kolejka:
         z_kopia = z.copy()
-        z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d") if isinstance(z_kopia['termin'], datetime.date) else z_kopia['termin']
-        z_kopia['start_produkcji'] = z_kopia['start_produkcji'].strftime("%Y-%m-%d") if isinstance(z_kopia['start_produkcji'], datetime.date) else z_kopia['start_produkcji']
+        # Obsługa konwersji dat na stringi do JSON
+        if isinstance(z_kopia['termin'], datetime.date):
+            z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
+        if isinstance(z_kopia['start_produkcji'], datetime.date):
+            z_kopia['start_produkcji'] = z_kopia['start_produkcji'].strftime("%Y-%m-%d")
         kolejka_do_zapisu.append(z_kopia)
     with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
         json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
@@ -64,7 +67,7 @@ DNI_PL = {"Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa",
 WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
 
 # --- LOGIKA PLANOWANIA ---
-def generuj_plan_finalny(kolejka):
+def generuj_plan_finalny(kolejka, pracujemy_w_niedziele):
     if not kolejka: return {}, []
     zadania = [dict(z) for z in kolejka]
     plan_dni, raport, MAX_CZAS = {}, [], 840
@@ -75,9 +78,13 @@ def generuj_plan_finalny(kolejka):
         ile = int(z['ile'])
         wyd = WYDAJNOSC.get(str(z["art"]), 70)
         data_k = max(data_dzis, z['start_produkcji'])
+        
         while ile > 0:
-            if data_k.weekday() == 6: 
-                data_k += datetime.timedelta(days=1); continue
+            # POMIJANIE NIEDZIELI (jeśli gzik w sidebarze jest wyłączony)
+            if not pracujemy_w_niedziele and data_k.weekday() == 6: 
+                data_k += datetime.timedelta(days=1)
+                continue
+                
             d_key = data_k.strftime("%Y-%m-%d")
             if d_key not in plan_dni: plan_dni[d_key] = MAX_CZAS
             wolny_czas = plan_dni[d_key]
@@ -105,7 +112,7 @@ def generuj_plan_finalny(kolejka):
                     "Przydatność": przydatnosc_dt.strftime("%d.%m.%y"),
                     "dt_s": data_k, 
                     "nad": is_nad,
-                    "orig_idx": idx # Śledzenie źródła do usuwania
+                    "orig_idx": idx 
                 })
                 ile -= produkcja
                 plan_dni[d_key] -= (produkcja * wyd)
@@ -117,7 +124,7 @@ def generuj_plan_finalny(kolejka):
     for r in raport_sorted:
         dk = r['Data']
         if dk not in widok: 
-            widok[dk] = {"dz": r['Dzień'], "p": [], "suma": 0, "czas_suma": 0, "ma_nad": False, "data_przydatnosci": r["Przydatność"], "full_date": r['dt_s']}
+            widok[dk] = {"dz": r['Dzień'], "p": [], "suma": 0, "czas_suma": 0, "ma_nad": False, "data_przydatnosci": r["Przydatność"]}
         widok[dk]["p"].append(r)
         widok[dk]["suma"] += r["Palety"]
         widok[dk]["czas_suma"] += r["Palety"] * WYDAJNOSC.get(str(r["Art"]), 70)
@@ -128,6 +135,12 @@ def generuj_plan_finalny(kolejka):
 # --- START ---
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = wczytaj_dane()
+
+# SIDEBAR - OPCJE
+with st.sidebar:
+    st.header("⚙️ Ustawienia")
+    pracujemy_w_niedziele = st.checkbox("Praca w niedziele", value=False, help="Zaznacz, jeśli system ma planować produkcję również w niedziele.")
+    st.divider()
 
 tab1, tab2 = st.tabs(["📥 WPISYWANIE ZAMÓWIEŃ", "📋 GOTOWY HARMONOGRAM NA HALĘ"])
 
@@ -156,7 +169,7 @@ with tab1:
     if st.session_state.kolejka:
         df_edit = pd.DataFrame(st.session_state.kolejka)
         
-        # Konfiguracja edytora danych
+        # Edytor danych
         edited_df = st.data_editor(
             df_edit,
             column_order=("kraj", "art", "ile", "start_produkcji", "termin"),
@@ -172,9 +185,8 @@ with tab1:
             key="kolejka_editor"
         )
         
-        # Jeśli dane w edytorze się zmieniły, zaktualizuj session_state i zapisz
+        # Logika zapisu zmian z edytora
         if not edited_df.equals(df_edit):
-            # Konwersja dat z powrotem na obiekty date, jeśli edytor zamienił je na coś innego
             edited_df['start_produkcji'] = pd.to_datetime(edited_df['start_produkcji']).dt.date
             edited_df['termin'] = pd.to_datetime(edited_df['termin']).dt.date
             st.session_state.kolejka = edited_df.to_dict('records')
@@ -188,11 +200,12 @@ with tab1:
     else:
         st.info("Brak zamówień.")
 
-# --- OKIENKO 2: HARMONOGRAM NA GOTOWO Z USUWANIEM ---
+# --- OKIENKO 2: HARMONOGRAM Z OPCJĄ NIEDZIELI ---
 with tab2:
     st.subheader("Harmonogram Produkcji (Rozpiska na halę)")
     if st.session_state.kolejka:
-        dni_plan, raport_raw = generuj_plan_finalny(st.session_state.kolejka)
+        # PRZEKAZUJEMY STAN CHECKBOXA DO FUNKCJI
+        dni_plan, raport_raw = generuj_plan_finalny(st.session_state.kolejka, pracujemy_w_niedziele)
         dni_posortowane = sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
         
         grid = st.columns(5)
@@ -200,12 +213,11 @@ with tab2:
             with grid[i % 5]:
                 d_info = dni_plan[dk]
                 
-                # Nagłówek karty z przyciskiem usuwania
                 is_nad = d_info["ma_nad"] or d_info["czas_suma"] > 840
                 color_header = "#E65100" if is_nad else "#1B5E20"
                 bg_header = "#FFF3E0" if is_nad else "#F1F8E9"
 
-                # Wyświetlamy HTML nagłówka, ale przyciski Streamlit muszą być osobno
+                # Nagłówek
                 st.markdown(f"""
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #EEE; margin-bottom: 5px; padding-bottom: 5px;">
                     <div style="font-size: 17px; font-weight: bold; color: {color_header};">{dk} ({d_info["dz"][:3]})</div>
@@ -213,17 +225,14 @@ with tab2:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Przycisk usuwania dnia
-                if st.button(f"🗑️ USUŃ DZIEŃ {dk}", key=f"del_day_{dk}", use_container_width=True, type="secondary"):
-                    # Pobieramy indeksy oryginalnych zamówień, które wystąpiły w tym dniu
+                # Przycisk usuwania
+                if st.button(f"🗑️ USUŃ DZIEŃ {dk}", key=f"del_day_{dk}", use_container_width=True):
                     indices_to_remove = set(p['orig_idx'] for p in d_info['p'])
-                    # Tworzymy nową kolejkę bez tych zamówień
-                    new_kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in indices_to_remove]
-                    st.session_state.kolejka = new_kolejka
+                    st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in indices_to_remove]
                     zapisz_dane(st.session_state.kolejka)
                     st.rerun()
 
-                # Reszta karty (godziny i palety)
+                # Logika godzin
                 if d_info["czas_suma"] <= 420:
                     zmiany_txt = "⏱️ 1 zmiana"
                     godziny = "06:00-15:00" if is_nad else "06:00-14:00"
@@ -255,4 +264,4 @@ with tab2:
         if not df_final.empty:
             st.dataframe(df_final[['Data', 'Dzień', 'Art', 'Palety', 'Kraj', 'Wysyłka', 'Przydatność']].style.apply(lambda r: ['background-color: #C8E6C9' if r.Kraj == 'Słowacja' else ''] * len(r), axis=1), use_container_width=True, hide_index=True)
     else:
-        st.warning("Najpierw wpisz zamówienia.")
+        st.warning("Baza zamówień jest pusta.")
