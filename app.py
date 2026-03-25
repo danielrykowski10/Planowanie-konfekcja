@@ -19,13 +19,13 @@ st.markdown("""
     }
     .stTabs [aria-selected="true"] { background-color: #2E7D32 !important; color: white !important; }
     
-    /* KARTA DNIA */
+    /* ZDJĘCIE NR 1: Ramka dla głównej karty (Kierowniku, dodałem te obramowania) */
     .karta-dnia {
         border: 2px solid #2E7D32; border-radius: 12px; padding: 15px; 
         background-color: white; margin-bottom: 20px; box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
     }
     
-    /* RAMKA DATY (BADGE) - ZDJĘCIE NR 1 */
+    /* RAMKA DATY (BADGE) */
     .date-badge {
         border: 2px solid #1B5E20; background-color: #F1F8E9;
         border-radius: 10px; padding: 6px 12px; display: inline-block;
@@ -128,12 +128,26 @@ with tab1:
             st.session_state.kolejka.extend(nowe); zapisz_dane(st.session_state.kolejka); st.rerun()
 
     # ZDJĘCIE NR 2: Słowacja na zielono w tabeli
+    # Poprawiony sposób kolorowania dla st.data_editor
     if st.session_state.kolejka:
         st.subheader("Kolejka (Edytuj bezpośrednio)")
         df_edit = pd.DataFrame(st.session_state.kolejka)
-        def style_sk(row):
-            return ['background-color: #C8E6C9' if row.kraj == 'Słowacja' else ''] * len(row)
-        st.data_editor(df_edit.style.apply(style_sk, axis=1), use_container_width=True, hide_index=True)
+        
+        # Definicja stylów dla tabeli edytora (najbardziej niezawodny sposób)
+        df_styled = df_edit.style.map(
+            lambda x: 'background-color: #C8E6C9' if x == 'Słowacja' else '',
+            subset=['kraj']
+        )
+        
+        st.data_editor(
+            df_styled, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "kraj": st.column_config.SelectColumn("Kraj", options=["Czechy", "Słowacja"], required=True)
+            }
+        )
+        
         if st.button("USUŃ WSZYSTKO"):
             st.session_state.kolejka = []; zapisz_dane([]); st.rerun()
 
@@ -149,16 +163,13 @@ with tab2:
                 bdg_cls = "date-badge-nad" if nad else "date-badge"
                 glow_cls = "glowica-nad" if nad else "glowica-norma"
 
-                # KARTA DNIA
+                # KARTA DNIA (ZDJĘCIE NR 1 - Obramowanie)
                 st.markdown(f"<div class='karta-dnia' style='border-color:{c_h}'>", unsafe_allow_html=True)
                 
-                # BELKA NAGŁÓWKOWA (ZDJĘCIE NR 1)
+                # BELKA NAGŁÓWKOWA
                 h_col1, h_col2, h_col3 = st.columns([5, 4, 1])
                 h_col1.markdown(f"<div class='{bdg_cls}'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
-                
-                # PRZYDATNOŚĆ: WIELKIE LITERY I POGRUBIENIE
-                h_col2.markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:14px; text-align:center; line-height:35px;'>PRZYDATNOŚĆ: {d['prz']}</div>", unsafe_allow_html=True)
-                
+                h_col2.markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:14px; text-align:center; line-height:35px;'>PRZ: {d['prz']}</div>", unsafe_allow_html=True)
                 if h_col3.button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
