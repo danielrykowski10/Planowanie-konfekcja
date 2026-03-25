@@ -8,7 +8,7 @@ import os
 PLIK_DANYCH = "dane_zamowien.json"
 st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
-# Stylizacja - krzyżyk w rogu i przydatność na środku
+# Stylizacja - Ramka przy dacie i poprawiony układ
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -33,14 +33,21 @@ st.markdown("""
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
         position: relative;
     }
-    /* Stylizacja nagłówka karty */
-    .header-container {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-bottom: 2px solid #EEE;
-        margin-bottom: 8px;
-        padding-bottom: 5px;
+    .date-frame {
+        border: 2px solid #1B5E20;
+        background-color: #F1F8E9;
+        border-radius: 8px;
+        padding: 4px 10px;
+        display: inline-block;
+        text-align: center;
+    }
+    .date-frame-nad {
+        border: 2px solid #E65100;
+        background-color: #FFF3E0;
+        border-radius: 8px;
+        padding: 4px 10px;
+        display: inline-block;
+        text-align: center;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -71,6 +78,7 @@ def zapisz_dane(kolejka):
 DNI_PL = {"Monday": "Pon", "Tuesday": "Wt", "Wednesday": "Śr", "Thursday": "Czw", "Friday": "Pt", "Saturday": "Sob", "Sunday": "Nd"}
 WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
 
+# --- LOGIKA PLANOWANIA ---
 def generuj_plan_finalny(kolejka, pracujemy_niedziela):
     if not kolejka: return {}, []
     zadania = [dict(z) for z in kolejka]
@@ -115,7 +123,7 @@ if 'kolejka' not in st.session_state:
 
 with st.sidebar:
     st.header("⚙️ OPCJE")
-    pracujemy_niedziela = st.checkbox("Pracujemy w Niedziele", value=True) # Domyślnie włączone, żeby nie uciekało
+    pracujemy_niedziela = st.checkbox("Planuj pracę w Niedziele", value=True)
     st.divider()
 
 t1, t2 = st.tabs(["📥 WPISYWANIE", "📋 HARMONOGRAM NA HALĘ"])
@@ -132,7 +140,7 @@ with t1:
             with cols[i % 5]:
                 v = st.number_input(f"Art {art_id}", min_value=0, step=1)
                 if v > 0: nowe.append({"art": art_id, "ile": v, "termin": dw, "start_produkcji": ds, "kraj": kraj})
-        if st.form_submit_button("DODAJ"):
+        if st.form_submit_button("DODAJ DO KOLEJKI"):
             st.session_state.kolejka.extend(nowe); zapisz_dane(st.session_state.kolejka); st.rerun()
 
     if st.session_state.kolejka:
@@ -150,11 +158,22 @@ with t2:
                 d = dni_plan[dk]
                 nad = d["ma_nad"] or d["czas_suma"] > 840
                 c_h = "#E65100" if nad else "#1B5E20"
+                frame_class = "date-frame-nad" if nad else "date-frame"
                 
-                # --- NAGŁÓWEK Z DATĄ I KRZYŻYKIEM ---
-                head_col1, head_col2, head_col3 = st.columns([2, 3, 1])
-                head_col1.markdown(f"<b style='color:{c_h}; font-size:16px;'>{dk} ({d['dz']})</b>", unsafe_allow_html=True)
-                head_col2.markdown(f"<center><b style='color:#d32f2f; font-size:12px;'>PRZ: {d['prz']}</b></center>", unsafe_allow_html=True)
+                # --- NAGŁÓWEK Z RAMKĄ, PRZYDATNOŚCIĄ I KRZYŻYKIEM ---
+                head_col1, head_col2, head_col3 = st.columns([1.5, 2, 0.5])
+                
+                # RAMKA Z DATĄ
+                head_col1.markdown(f"""
+                    <div class='{frame_class}'>
+                        <b style='color:{c_h}; font-size:15px;'>{dk} ({d['dz']})</b>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # PRZYDATNOŚĆ NA ŚRODKU
+                head_col2.markdown(f"<center><b style='color:#d32f2f; font-size:11px; line-height:30px;'>PRZ: {d['prz']}</b></center>", unsafe_allow_html=True)
+                
+                # KRZYŻYK
                 if head_col3.button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
@@ -163,9 +182,10 @@ with t2:
                 # --- TREŚĆ KARTY ---
                 zm = "2 zmiany" if d["czas_suma"] > 420 else "1 zmiana"
                 godz = "06-15 / 15-23" if nad else "06-14 / 14-22"
+                bg_header = "#FFF3E0" if nad else "#F1F8E9"
                 
                 html = f"""<div class='karta-dnia' style='border-color:{c_h}'>
-                <div style='background:#f9f9f9; padding:5px; border-radius:5px; margin-bottom:10px;'>
+                <div style='background:{bg_header}; padding:5px; border-radius:5px; margin-bottom:10px;'>
                 <b>SUMA: {int(d['suma'])} palet</b><br>
                 <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
                 </div>"""
