@@ -1,234 +1,201 @@
 import streamlit as st
-import datetime
-import pandas as pd
-import json
-import os
+import streamlit.components.v1 as components
 
 # --- KONFIGURACJA ---
-# Plik bazy danych
-PLIK_DANYCH = "dane_zamowien.json"
-st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
+st.set_page_config(page_title="MR Therapy", page_icon="🌿", layout="centered")
 
-# --- PARAMETRY ---
-WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
-DNI_PL = {"Monday": "Pon", "Tuesday": "Wt", "Wednesday": "Śr", "Thursday": "Czw", "Friday": "Pt", "Saturday": "Sob", "Sunday": "Nd"}
-CZAS_ZMIANY = 420  # Minuty
-
-# --- STYLIZACJA CSS ---
-st.markdown("""
+# --- LUKSUSOWY DESIGN (CSS) ---
+st.markdown(f"""
     <style>
-    /* Global bold text for all planned harmonogram content - Fix Point 2 */
-    .stMarkdown p { font-weight: bold; }
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400&display=swap');
+
+    /* Kolory i Tło */
+    .stApp {{
+        background-color: #FDFBF7;
+        color: #5C4D43;
+    }}
     
-    .karta-dnia {
-        border: 2px solid #2E7D32;
-        border-radius: 12px;
-        padding: 12px;
-        background-color: white;
-        margin-bottom: 20px;
-        box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
-    }
-    .karta-naglowek {
+    html, body, [data-testid="stSidebar"] {{
+        font-family: 'Lato', sans-serif;
+    }}
+
+    h1, h2, h3, .serif-text {{
+        font-family: 'Playfair Display', serif;
+        color: #4B3F36;
+    }}
+
+    /* iOS Tab Bar (Bottom) */
+    .nav-bar {{
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background: rgba(253, 251, 247, 0.8);
+        backdrop-filter: blur(15px);
         display: flex;
-        justify-content: space-between;
+        justify-content: space-around;
+        padding: 15px 0;
+        border-top: 1px solid rgba(212, 193, 179, 0.3);
+        z-index: 1000;
+    }}
+    
+    .nav-item {{
+        text-align: center;
+        color: #5C4D43;
+        font-size: 10px;
+        text-decoration: none;
+    }}
+
+    /* Karty Glassmorphism */
+    .glass-card {{
+        background: rgba(255, 255, 255, 0.4);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(212, 193, 179, 0.5);
+        border-radius: 20px;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+    }}
+
+    /* Wyzwanie 21 Dni - Siatka */
+    .grid-container {{
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 10px;
+        margin-top: 20px;
+    }}
+    .day-circle {{
+        width: 35px;
+        height: 35px;
+        border-radius: 50%;
+        border: 1px solid #D4C1B3;
+        display: flex;
         align-items: center;
-        border-bottom: 1px solid #EEE;
-        padding-bottom: 8px;
-        margin-bottom: 12px;
-    }
-    
-    /* Sage green row background for Słowacja within planned cards - Fix Point 3 */
-    .slowacja-planned-row {
-        background-color: #C8E6C9; /* Light Sage Green to fitting aesthetic */
-        border: 1px solid #2E7D32;
-        border-radius: 6px;
-        padding: 8px;
-        margin-bottom: 8px;
-    }
-    
-    .other-planned-row {
-        background-color: #F1F1F1;
-        border: 1px solid #CCC;
-        border-radius: 6px;
-        padding: 8px;
-        margin-bottom: 8px;
-    }
-    
-    /* Style for simplified Queue Viewer to address Point 1 */
-    [data-testid="stDataEditor"] [data-testid="stDataEditor-Col"] {
-        max-width: 150px; /* Simplified display, explicitly removing dynammic product columns pointing to empty space */
-    }
+        justify-content: center;
+        font-size: 12px;
+        cursor: pointer;
+    }}
+    .day-done {{
+        background-color: #D4C1B3;
+        color: white;
+    }}
+
+    /* Ukrywanie standardowych elementów Streamlit */
+    #MainMenu, footer, header {{visibility: hidden;}}
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNKCJE DANYCH ---
-def wczytaj_dane():
-    if os.path.exists(PLIK_DANYCH):
-        try:
-            with open(PLIK_DANYCH, "r", encoding="utf-8") as f:
-                dane = json.load(f)
-                for z in dane:
-                    z['termin'] = datetime.datetime.strptime(z['termin'], "%Y-%m-%d").date()
-                    z['start_produkcji'] = datetime.datetime.strptime(z.get('start_produkcji', datetime.date.today().strftime("%Y-%m-%d")), "%Y-%m-%d").date()
-                return dane
-        except: return []
-    return []
+# --- SESSION STATE (Nawigacja) ---
+if 'active_tab' not in st.session_state:
+    st.session_state.active_tab = "Pulpit"
+if 'challenge_progress' not in st.session_state:
+    st.session_state.challenge_progress = [False] * 21
 
-def zapisz_dane(kolejka):
-    kolejka_do_zapisu = []
-    for z in kolejka:
-        z_kopia = z.copy()
-        z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
-        z_kopia['start_produkcji'] = z_kopia['start_produkcji'].strftime("%Y-%m-%d")
-        kolejka_do_zapisu.append(z_kopia)
-    with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
-        json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
+# --- MENU NAWIGACJI (Customowe przyciski symulujące Tab Bar) ---
+# Uwaga: Streamlit nie pozwala na łatwe przyciski w stałym footerze, 
+# więc używamy st.columns jako górnego lub bocznego menu, ale stylizujemy je.
 
-# --- LOGIKA PLANOWANIA (Kopiowana, nie zmieniana) ---
-def generuj_plan(kolejka):
-    if not kolejka: return {}
-    raport, plan_dni, MAX_CZAS = [], {}, 840
-    data_dzis = datetime.date.today()
-    zadania = [dict(z) for z in kolejka]
-    zadania.sort(key=lambda x: (x['termin'], x['art']))
+cols = st.columns(4)
+with cols[0]:
+    if st.button("🏠\nPulpit"): st.session_state.active_tab = "Pulpit"
+with cols[1]:
+    if st.button("📍\nDiagnoza"): st.session_state.active_tab = "Diagnoza"
+with cols[2]:
+    if st.button("📅\nWyzwanie"): st.session_state.active_tab = "Wyzwanie"
+with cols[3]:
+    if st.button("✨\nRytuał"): st.session_state.active_tab = "Rytuał"
+
+st.markdown("---")
+
+# --- LOGIKA EKRANÓW ---
+
+if st.session_state.active_tab == "Pulpit":
+    st.markdown("<h1 style='text-align: center;'>MR Therapy</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-style: italic;'>Zatrzymaj się. Poczyń przestrzeń dla siebie.</p>", unsafe_allow_html=True)
     
-    for z in zadania:
-        ile = int(z['ile'])
-        wyd = WYDAJNOSC.get(z["art"], 70)
-        data_k = max(data_dzis, z['start_produkcji'])
-        while ile > 0:
-            if data_k.weekday() == 6: 
-                data_k += datetime.timedelta(days=1); continue
-            d_key = data_k.strftime("%Y-%m-%d")
-            if d_key not in plan_dni: plan_dni[d_key] = MAX_CZAS
-            wolny_czas = plan_dni[d_key]
-            dostepny = wolny_czas if data_k != z['termin'] else max(0, 420 - (MAX_CZAS - wolny_czas))
-            produkcja = min(dostepny // wyd, ile)
-            is_nadgodziny = False
-            if data_k == z['termin'] and ile > produkcja:
-                produkcja = ile
-                is_nadgodziny = True
-            if produkcja > 0:
-                raport.append({"Data": data_k.strftime("%d.%m"), "Art": z["art"], "Palety": produkcja, "Kraj": z["kraj"], "Wysyłka": z["termin"].strftime("%d.%m"), "nad": is_nadgodziny, "dz": DNI_PL.get(data_k.strftime("%A")), "dt_s": data_k})
-                ile -= produkcja
-                plan_dni[d_key] -= (produkcja * wyd)
-                if ile > 0: plan_dni[d_key] = 0
-            if ile > 0: data_k += datetime.timedelta(days=1)
+    st.image("https://images.unsplash.com/photo-1544161515-4ab6ce6db874?q=80&w=800&auto=format&fit=crop", use_container_width=True)
     
-    widok = {}
-    raport_raw = sorted(raport, key=lambda x: x['dt_s'])
-    for r in raport_raw:
-        dk = r['Data']
-        if dk not in widok: widok[dk] = {"dz": r['dz'], "p": [], "suma": 0, "czas_suma": 0, "ma_nad": False}
-        widok[dk]["p"].append(r)
-        widok[dk]["suma"] += r["Palety"]
-        widok[dk]["czas_suma"] += r["Palety"] * WYDAJNOSC.get(r["Art"], 70)
-        if r["nad"]: widok[dk]["ma_nad"] = True
-    return widok, raport_raw
+    with st.expander("🍃 Dźwięki relaksu (ASMR)"):
+        st.audio("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3") # Przykładowy relaksacyjny loop
+        st.caption("Włącz i poczuj spokój podczas przeglądania.")
 
-# --- INICJALIZACJA SESJI ---
-if 'kolejka' not in st.session_state:
-    st.session_state.kolejka = wczytaj_dane()
+    st.markdown("""
+    <div class='glass-card'>
+        <h3 class='serif-text'>Regulacja dla dzieci</h3>
+        <p>Specjalistyczna pomoc w stanach przebodźcowania, tikach i problemach ze snem u najmłodszych.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# --- GŁÓWNY PANEL UI ---
-t1, t2 = st.tabs(["📥 WPISYWANIE ZAMÓWIEŃ", "📋 HARMONOGRAM NA GOTOWO"])
+    st.markdown("### Kontakt")
+    st.info("📍 Przasnysz, ul. Ostrołęcka 28\n\n📍 Olsztyn, ul. Jagiellońska 44b/6")
 
-# OKNO 1: WPISYWANIE
-with t1:
-    st.subheader("Nowe Zamówienia")
-    with st.form("entry_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        f_kraj = c1.selectbox("Kierunek auto", ["Czechy", "Słowacja"])
-        f_start = c2.date_input("Kiedy można zacząć produkcję?", datetime.date.today())
-        f_wysylka = c3.date_input("Termin wyjazdu auta (Wysyłka)", datetime.date.today() + datetime.timedelta(days=3))
-        st.write("Wpisz ilość palet dla artykułu:")
-        temp_list = []
-        cols = st.columns(5)
-        
-        # entry form needs explicit product ID
-        for i, (art_id, wyd) in enumerate(WYDAJNOSC.items()):
-            with cols[i % 5]:
-                val = st.number_input(f"Art {art_id} ({wyd} min/pal)", min_value=0, step=1, key=f"inp_{art_id}")
-                if val > 0:
-                    temp_list.append({"kraj": f_kraj, "art": art_id, "ile": val, "termin": f_wysylka, "start_produkcji": f_start})
-        
-        if st.form_submit_button("ZAPISZ DO KOLEJKI (Generuj Plan)"):
-            st.session_state.kolejka.extend(temp_list)
-            zapisz_dane(st.session_state.kolejka)
-            st.rerun()
+elif st.session_state.active_tab == "Diagnoza":
+    st.markdown("<h2 class='serif-text'>Interaktywna Mapa Twarzy</h2>", unsafe_allow_html=True)
+    st.write("Kliknij w obszar, aby dowiedzieć się, co mówi Twoje ciało.")
 
-    # OKNO 1 Queue Viewer section - FIX POINT 1 (Remove product dynamism in viewer)
-    st.divider()
-    st.subheader("Kolejka (Edytuj bezpośrednio)")
-    if st.session_state.kolejka:
-        # Construct DataFrame explicitely listing ID and Quantity per row
-        df_display_base = []
-        for z in st.session_state.kolejka:
-            # Check for existing article ID structure vs dynamic structure from Point 1 image
-            if 'art' in z and 'ile' in z:
-                # This is a good standard record with explicit article ID and Quantity
-                df_display_base.append({"kraj": z["kraj"], "art": z["art"], "ile": z["ile"], "termin": z["termin"], "start_produkcji": z["start_produkcji"]})
+    # Symulacja Mapy Twarzy za pomocą przycisków (Streamlit nie wspiera natywnie SVG click)
+    diag_col1, diag_col2 = st.columns(2)
+    
+    with diag_col1:
+        if st.button("Czoło: Centrum Kontroli"):
+            st.warning("**Czoło:** Tu kumulujesz nadmierną kontrolę. Spięte mięśnie to sygnał stresu dla mózgu. Rekomendacja: Facemodeling.")
+        if st.button("Żuchwa: Magazyn Stresu"):
+            st.warning("**Żuchwa:** Tu zapisują się niewypowiedziane emocje (Bruksizm). Rekomendacja: Terapia Transbukalna.")
+    
+    with diag_col2:
+        if st.button("Oczy: Lustro Zmęczenia"):
+            st.warning("**Oczy:** Zastoje limfy to brak oddechu w ciele. Rekomendacja: Kobido i drenaż.")
+        if st.button("Szyja: Fundament"):
+            st.warning("**Szyja:** Skrócone powięzi ściągają owal w dół. Rekomendacja: Estetyczna Rehabilitacja.")
+
+elif st.session_state.active_tab == "Wyzwanie":
+    st.markdown("<h2 class='serif-text'>21 Dni Blasku</h2>", unsafe_allow_html=True)
+    st.write("Twoja droga do naturalnego liftingu. Odhaczaj wykonany rytuał każdego dnia.")
+    
+    # Renderowanie siatki wyzwania
+    cols_grid = st.columns(7)
+    for i in range(21):
+        with cols_grid[i % 7]:
+            label = f"Dzień {i+1}"
+            if st.session_state.challenge_progress[i]:
+                if st.button("✅", key=f"day_{i}"):
+                    st.session_state.challenge_progress[i] = False
+                    st.rerun()
             else:
-                # Dynamic record type pointed to in Image 1 -> Optimize display
-                for art_id in WYDAJNOSC.keys():
-                    if z.get(art_id, 0) > 0:
-                         df_display_base.append({"kraj": z["kraj"], "art": art_id, "ile": z[art_id], "termin": z["termin"], "start_produkcji": z["start_produkcji"]})
-        
-        # Build DataFrame with Kraj, Art, Ile, Start Produkcji, Termin
-        df_edit = pd.DataFrame(df_display_base)
-        # Show structured view in Tab 1, only Kraj and Quantity are editable. Start Date and End Date is viewable.
-        edited_df = st.data_editor(df_edit, use_container_width=True, hide_index=True)
+                if st.button(f"{i+1}", key=f"day_{i}"):
+                    st.session_state.challenge_progress[i] = True
+                    st.rerun()
+    
+    progress = sum(st.session_state.challenge_progress)
+    st.progress(progress / 21)
+    st.write(f"Ukończono {progress} z 21 dni. Jesteś cudowna!")
 
-        if st.button("USUŃ WSZYSTKIE POZYCJE Z KOLEJKI"):
-            st.session_state.kolejka = []
-            zapisz_dane([])
-            st.rerun()
+elif st.session_state.active_tab == "Rytuał":
+    st.markdown("<h2 class='serif-text'>Codzienny Rytuał</h2>", unsafe_allow_html=True)
+    
+    # Tryb Lustra - Realizacja techniczna w Streamlit przez Camera Input
+    show_mirror = st.toggle("✨ Włącz tryb lustra")
+    if show_mirror:
+        st.camera_input("Twoje lustro", label_visibility="collapsed")
+        st.caption("Widzisz siebie? Teraz naśladuj ruchy Magdy.")
 
-# OKNO 2: HARMONOGRAM NA GOTOWO
-with t2:
-    if not st.session_state.kolejka:
-        st.info("Kolejka jest pusta. Wpisz zamówienia w zakładce 📥.")
-    else:
-        st.subheader("Harmonogram Produkcji (Rozpiska na halę)")
-        dni_plan, raport_raw = generuj_plan(st.session_state.kolejka)
-        
-        # Widok kart planu - FIX POINT 2 (Bold text) & FIX POINT 3 (Green background for Słowacja rows)
-        if not dni_plan:
-             st.warning("Brak planu do wyświetlenia. Sprawdź terminy zamówień.")
-        else:
-            dni_posortowane = sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
-            grid = st.columns(5)
-            for i, dk in enumerate(dni_posortowane):
-                with grid[i % 5]:
-                    d_info = dni_plan[dk]
-                    nadgodziny_txt = " ⚠️ NADGODZINY ZAMÓWIEŃ" if d_info["ma_nad"] else ""
-                    
-                    st.markdown(f'<div class="karta-dnia">', unsafe_allow_html=True)
-                    st.markdown(f'<div class="karta-naglowek"><b><span style="color:#2E7D32; font-size:18px;">{dk} ({d_info["dz"]})</span></b> <span style="font-size:12px;">Suma: <b>{int(d_info["suma"])} palet</b></span></div>', unsafe_allow_html=True)
-                    
-                    # Wnętrze karty (artykuły) - FIX Point 2 & 3 inside HTML
-                    for p in d_info['p']:
-                        # Fix Point 3: Clearly Sage Green background for Słowacja within cards
-                        row_class = "slowacja-planned-row" if p['Kraj'] == "Słowacja" else "other-planned-row"
-                        
-                        # Apply bolder style explicitely inside internal row structure (Point 2)
-                        st.markdown(f"""
-                        <div class="{row_class}">
-                            Art <b>{p['Art']}</b> -- <b>{int(p['Palety'])} pal.</b><br>
-                            Auto: {p['Wysyłka']} ({p['Kraj']})
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    # Czas pracy na dole karty
-                    cz = "2 zmiany" if d_info["czas_suma"] > 420 else "1 zmiana"
-                    czas_style = "color:#E65100; font-weight:bold;" if d_info["ma_nad"] or d_info["czas_suma"] > 840 else ""
-                    st.markdown(f'<div style="border-top:1px solid #EEE; padding-top:8px; margin-top:8px; font-size:13px;{czas_style}">{cz}{nadgodziny_txt}</div>', unsafe_allow_html=True)
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("### Wybierz masaż na dziś:")
+    
+    tab1, tab2, tab3 = st.tabs(["Head Spa", "Facemodeling", "Babuu"])
+    
+    with tab1:
+        st.video("https://www.instagram.com/reel/DImUV4FNw_F/")
+        st.markdown("[Poczuj rozluźnienie na Instagramie →](https://www.instagram.com/reel/DImUV4FNw_F/)")
+    with tab2:
+        st.video("https://www.instagram.com/reel/DI1Xfx7NfT7/")
+    with tab3:
+        st.video("https://www.instagram.com/reel/DIO8P4-tjrv/")
 
-        st.divider()
-        st.subheader("Lista Zbiorcza (Raw Data Viewer)")
-        df_final = pd.DataFrame(raport_raw)
-        if not df_final.empty:
-            #Simplified static view in Tab 2
-            st.dataframe(df_final[['Data', 'Art', 'Palety', 'Kraj', 'Wysyłka']], use_container_width=True, hide_index=True)
+# --- FOOTER ---
+st.markdown("<br><br><br>", unsafe_allow_html=True)
+st.markdown("""
+    <div style='text-align: center; color: #A98D80; font-size: 12px;'>
+        MR Therapy | Magdalena Rykowska<br>
+        Instagram: @mr__therapy_ | Facebook: MrtherapyMagdalenaRykowska
+    </div>
+""", unsafe_allow_html=True)
