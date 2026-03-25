@@ -133,13 +133,18 @@ with tab1:
         st.subheader("Kolejka (Edytuj bezpośrednio)")
         df_edit = pd.DataFrame(st.session_state.kolejka)
         
-        def koloruj_slowacje(row):
-            kolor = 'background-color: #C8E6C9' if row['kraj'] == 'Słowacja' else ''
-            return [kolor] * len(row)
+        # PANCERNA FUNKCJA KOLORUJĄCA W TABELI
+        def style_kraj(row):
+            bg = 'background-color: #C8E6C9' if row['kraj'] == 'Słowacja' else ''
+            return [bg] * len(row)
             
+        styled_df = df_edit.style.apply(style_kraj, axis=1)
+        
         edited_df = st.data_editor(
-            df_edit.style.apply(koloruj_slowacje, axis=1), 
-            use_container_width=True, hide_index=True
+            styled_df, 
+            use_container_width=True, 
+            hide_index=True,
+            key="tabela_kolejki" # Ten klucz wymusza poprawne renderowanie
         )
         
         if not edited_df.equals(df_edit):
