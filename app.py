@@ -8,7 +8,7 @@ import os
 PLIK_DANYCH = "dane_zamowien.json"
 st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
-# --- STYLIZACJA ---
+# --- LUKSUSOWA STYLIZACJA ---
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -32,25 +32,26 @@ st.markdown("""
         background-color: white; 
         margin-bottom: 20px;
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+        position: relative;
     }
     /* RAMKA DATY (BADGE) */
     .date-badge {
         border: 2px solid #1B5E20;
         background-color: #F1F8E9;
-        border-radius: 8px;
-        padding: 4px 10px;
+        border-radius: 10px;
+        padding: 6px 12px;
         display: inline-block;
-        font-weight: bold;
-        color: #1B5E20;
+        text-align: center;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
     }
     .date-badge-nad {
         border: 2px solid #E65100;
         background-color: #FFF3E0;
-        border-radius: 8px;
-        padding: 4px 10px;
+        border-radius: 10px;
+        padding: 6px 12px;
         display: inline-block;
-        font-weight: bold;
-        color: #E65100;
+        text-align: center;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -166,18 +167,17 @@ with t2:
                 c_h = "#E65100" if nad else "#1B5E20"
                 badge_class = "date-badge-nad" if nad else "date-badge"
                 
-                # --- ZUNIFIKOWANY NAGŁÓWEK (Data, Przydatność i X w jednym) ---
-                # Używamy kolumn Streamlit, ale bardzo ciasno ułożonych
-                header_cols = st.columns([5, 4, 1])
+                # --- NAGŁÓWEK Z PEŁNĄ NAZWĄ DNIA ---
+                c_head1, c_head2, c_head3 = st.columns([2.5, 3.5, 0.5])
                 
-                # 1. Data porcjowania (w ramce)
-                header_cols[0].markdown(f"<div class='{badge_class}' style='font-size:13px;'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
+                # Ramka z pełną datą (usunięto skracanie [:3])
+                c_head1.markdown(f"<div class='{badge_class}'><b style='color:{c_h}; font-size:14px;'>{dk} ({d['dz']})</b></div>", unsafe_allow_html=True)
                 
-                # 2. Data przydatności (pogrubiona)
-                header_cols[1].markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:13px; line-height:30px; text-align:center;'>PRZ: {d['prz']}</div>", unsafe_allow_html=True)
+                # Duża przydatność na środku
+                c_head2.markdown(f"<center><b style='color:#d32f2f; font-size:14px; line-height:35px;'>PRZ: {d['prz']}</b></center>", unsafe_allow_html=True)
                 
-                # 3. Krzyżyk (X)
-                if header_cols[2].button("❌", key=f"del_{dk}"):
+                # Przycisk usuwania
+                if c_head3.button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
                     zapisz_dane(st.session_state.kolejka); st.rerun()
@@ -197,3 +197,4 @@ with t2:
                     html += f"<div style='background:{col}; border:1px solid #ccc; border-radius:5px; padding:5px; margin-bottom:5px; font-size:12px; color:#000;'>"
                     html += f"<b>Art {p['Art']} — {int(p['Palety'])} pal.</b><br>Auto: {p['Wysyłka']}</div>"
                 st.markdown(html + "</div>", unsafe_allow_html=True)
+                
