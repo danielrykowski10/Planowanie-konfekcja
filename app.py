@@ -19,7 +19,7 @@ st.markdown("""
     }
     .stTabs [aria-selected="true"] { background-color: #2E7D32 !important; color: white !important; }
     
-    /* ZDJĘCIE NR 1: Ramka dla głównej karty (Kierowniku, dodałem te obramowania) */
+    /* KARTA DNIA */
     .karta-dnia {
         border: 2px solid #2E7D32; border-radius: 12px; padding: 15px; 
         background-color: white; margin-bottom: 20px; box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
@@ -127,33 +127,35 @@ with tab1:
         if st.form_submit_button("DODAJ"):
             st.session_state.kolejka.extend(nowe); zapisz_dane(st.session_state.kolejka); st.rerun()
 
-    # ZDJĘCIE NR 2: Słowacja na zielono w tabeli
-    # Poprawiony sposób kolorowania dla st.data_editor
     if st.session_state.kolejka:
         st.subheader("Kolejka (Edytuj bezpośrednio)")
         df_edit = pd.DataFrame(st.session_state.kolejka)
         
-        # Definicja stylów dla tabeli edytora (najbardziej niezawodny sposób)
-        df_styled = df_edit.style.map(
-            lambda x: 'background-color: #C8E6C9' if x == 'Słowacja' else '',
-            subset=['kraj']
+        # PROSTA I NIEZAWODNA FUNKCJA KOLORUJĄCA WIERSZE
+        def koloruj_slowacje(row):
+            kolor = 'background-color: #C8E6C9' if row['kraj'] == 'Słowacja' else ''
+            return [kolor] * len(row)
+            
+        # Wyświetlamy tabelę bez 'column_config'
+        edited_df = st.data_editor(
+            df_edit.style.apply(koloruj_slowacje, axis=1), 
+            use_container_width=True
         )
         
-        st.data_editor(
-            df_styled, 
-            use_container_width=True, 
-            hide_index=True,
-            column_config={
-                "kraj": st.column_config.SelectColumn("Kraj", options=["Czechy", "Słowacja"], required=True)
-            }
-        )
-        
+        # Zapis ewentualnych edycji
+        if not edited_df.equals(df_edit):
+            edited_df['start_produkcji'] = pd.to_datetime(edited_df['start_produkcji']).dt.date
+            edited_df['termin'] = pd.to_datetime(edited_df['termin']).dt.date
+            st.session_state.kolejka = edited_df.to_dict('records')
+            zapisz_dane(st.session_state.kolejka)
+            st.rerun()
+            
         if st.button("USUŃ WSZYSTKO"):
             st.session_state.kolejka = []; zapisz_dane([]); st.rerun()
 
 with tab2:
     if st.session_state.kolejka:
-        dni_plan = generuj_plan(st.session_state.kolejka, True)
+        dni_plan = generuj_plan(st.session_state.kolejka, True) # Domyślnie niedziele włączone
         grid = st.columns(5)
         for i, dk in enumerate(sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
             with grid[i % 5]:
@@ -163,13 +165,16 @@ with tab2:
                 bdg_cls = "date-badge-nad" if nad else "date-badge"
                 glow_cls = "glowica-nad" if nad else "glowica-norma"
 
-                # KARTA DNIA (ZDJĘCIE NR 1 - Obramowanie)
+                # KARTA DNIA 
                 st.markdown(f"<div class='karta-dnia' style='border-color:{c_h}'>", unsafe_allow_html=True)
                 
                 # BELKA NAGŁÓWKOWA
                 h_col1, h_col2, h_col3 = st.columns([5, 4, 1])
                 h_col1.markdown(f"<div class='{bdg_cls}'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
-                h_col2.markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:14px; text-align:center; line-height:35px;'>PRZ: {d['prz']}</div>", unsafe_allow_html=True)
+                
+                # PRZYDATNOŚĆ: WIELKIE LITERY I POGRUBIENIE
+                h_col2.markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:14px; text-align:center; line-height:35px;'>PRZYDATNOŚĆ: {d['prz']}</div>", unsafe_allow_html=True)
+                
                 if h_col3.button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
@@ -192,5 +197,7 @@ with tab2:
                     <div style='background:{col}; border:1px solid #ccc; border-radius:6px; padding:6px; margin-bottom:6px; font-size:12px; color:#000;'>
                         <b>Art {p['Art']} — {int(p['Palety'])} pal.</b><br>Auto: {p['Wysyłka']}
                     </div>
+                    """, unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
                     """, unsafe_allow_html=True)
                 st.markdown("</div>", unsafe_allow_html=True)
