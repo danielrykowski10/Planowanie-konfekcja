@@ -94,8 +94,8 @@ def generuj_plan_finalny(kolejka):
                 is_nad = True
 
             if produkcja > 0:
-                # OBLICZANIE DATY PRZYDATNOŚCI (Data produkcji + 80 dni)
-                przydatnosc = data_k + datetime.timedelta(days=80)
+                # Obliczanie daty przydatności (+80 dni)
+                przydatnosc_dt = data_k + datetime.timedelta(days=80)
                 
                 raport.append({
                     "Data": data_k.strftime("%d.%m"), 
@@ -104,7 +104,7 @@ def generuj_plan_finalny(kolejka):
                     "Palety": int(produkcja), 
                     "Kraj": z["kraj"], 
                     "Wysyłka": z["termin"].strftime("%d.%m"), 
-                    "Przydatność": przydatnosc.strftime("%d.%m.%y"),
+                    "Przydatność": przydatnosc_dt.strftime("%d.%m.%y"),
                     "dt_s": data_k, 
                     "nad": is_nad
                 })
@@ -118,7 +118,7 @@ def generuj_plan_finalny(kolejka):
     for r in raport_sorted:
         dk = r['Data']
         if dk not in widok: 
-            widok[dk] = {"dz": r['Dzień'], "p": [], "suma": 0, "czas_suma": 0, "ma_nad": False}
+            widok[dk] = {"dz": r['Dzień'], "p": [], "suma": 0, "czas_suma": 0, "ma_nad": False, "data_przydatnosci": r["Przydatność"]}
         widok[dk]["p"].append(r)
         widok[dk]["suma"] += r["Palety"]
         widok[dk]["czas_suma"] += r["Palety"] * WYDAJNOSC.get(r["Art"], 70)
@@ -183,7 +183,13 @@ with tab2:
                 bg_header = "#FFF3E0" if is_nad else "#F1F8E9"
 
                 karta_html = f'<div class="karta-dnia" style="border-color: {color_header};">'
-                karta_html += f'<div style="font-size: 18px; font-weight: bold; color: {color_header}; border-bottom: 2px solid #EEE; margin-bottom: 5px;">{dk} ({d_info["dz"]})</div>'
+                
+                # NAGŁÓWEK Z DATĄ PRZYDATNOŚCI PO PRAWEJ STRONIE
+                karta_html += f'<div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #EEE; margin-bottom: 5px; padding-bottom: 5px;">'
+                karta_html += f'<div style="font-size: 17px; font-weight: bold; color: {color_header};">{dk} ({d_info["dz"][:3]})</div>'
+                karta_html += f'<div style="font-size: 13px; font-weight: bold; color: #d32f2f;">PRZ: {d_info["data_przydatnosci"]}</div>'
+                karta_html += f'</div>'
+
                 karta_html += f'<div style="background-color: {bg_header}; padding: 5px; border-radius: 5px; margin-bottom: 10px;">'
                 karta_html += f'<span style="font-size: 14px; font-weight: bold; color: #000;">SUMA: {int(d_info["suma"])} palet</span><br>'
                 karta_html += f'<span style="font-size: 13px; font-weight: bold; color: #FF0000;">{zmiany_txt} ({godziny})</span>'
@@ -196,9 +202,7 @@ with tab2:
                     
                     karta_html += f'<div style="background-color: {bg}; border: 1px solid {brd}; border-radius: 6px; padding: 6px; margin-bottom: 6px; font-size: 12px; color: #000;">'
                     karta_html += f'Art {p["Art"]} — <b style="font-size: 13px; color: #000;">{int(p["Palety"])} pal.</b><br>'
-                    karta_html += f'<span style="font-size: 11px; color: #000;">Wysyłka: {p["Wysyłka"]} ({p["Kraj"]})</span><br>'
-                    # DODANA DATA PRZYDATNOŚCI
-                    karta_html += f'<span style="font-size: 11px; font-weight: bold; color: #000;">Przydatność: {p["Przydatność"]}</span>'
+                    karta_html += f'<span style="font-size: 11px; color: #000;">Wysyłka: {p["Wysyłka"]} ({p["Kraj"]})</span>'
                     karta_html += f'</div>'
                 
                 karta_html += '</div>'
