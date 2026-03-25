@@ -28,18 +28,20 @@ st.markdown("""
     /* RAMKA DATY (BADGE) */
     .date-badge {
         border: 2px solid #1B5E20; background-color: #F1F8E9;
-        border-radius: 10px; padding: 6px 12px; display: inline-block;
+        border-radius: 8px; padding: 4px 10px; display: inline-block;
         font-weight: bold; color: #1B5E20; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+        font-size: 14px;
     }
     .date-badge-nad {
         border: 2px solid #E65100; background-color: #FFF3E0;
-        border-radius: 10px; padding: 6px 12px; display: inline-block;
-        font-weight: bold; color: #E65100;
+        border-radius: 8px; padding: 4px 10px; display: inline-block;
+        font-weight: bold; color: #E65100; font-size: 14px;
     }
 
-    /* GŁOWICA SUMY */
+    /* GŁOWICA SUMY I PRZYDATNOŚCI */
     .glowica-info {
-        padding: 10px; border-radius: 8px; margin-top: 10px; margin-bottom: 10px;
+        padding: 10px; border-radius: 8px; margin-bottom: 10px;
+        display: flex; justify-content: space-between; align-items: center;
     }
     .glowica-norma { background-color: #F1F8E9; border: 1px solid #C8E6C9; }
     .glowica-nad { background-color: #FFF3E0; border: 1px solid #FFE0B2; }
@@ -131,18 +133,15 @@ with tab1:
         st.subheader("Kolejka (Edytuj bezpośrednio)")
         df_edit = pd.DataFrame(st.session_state.kolejka)
         
-        # PROSTA I NIEZAWODNA FUNKCJA KOLORUJĄCA WIERSZE
         def koloruj_slowacje(row):
             kolor = 'background-color: #C8E6C9' if row['kraj'] == 'Słowacja' else ''
             return [kolor] * len(row)
             
-        # Wyświetlamy tabelę bez 'column_config'
         edited_df = st.data_editor(
             df_edit.style.apply(koloruj_slowacje, axis=1), 
-            use_container_width=True
+            use_container_width=True, hide_index=True
         )
         
-        # Zapis ewentualnych edycji
         if not edited_df.equals(df_edit):
             edited_df['start_produkcji'] = pd.to_datetime(edited_df['start_produkcji']).dt.date
             edited_df['termin'] = pd.to_datetime(edited_df['termin']).dt.date
@@ -155,7 +154,7 @@ with tab1:
 
 with tab2:
     if st.session_state.kolejka:
-        dni_plan = generuj_plan(st.session_state.kolejka, True) # Domyślnie niedziele włączone
+        dni_plan = generuj_plan(st.session_state.kolejka, True) # Niedziele włączone
         grid = st.columns(5)
         for i, dk in enumerate(sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
             with grid[i % 5]:
@@ -168,25 +167,29 @@ with tab2:
                 # KARTA DNIA 
                 st.markdown(f"<div class='karta-dnia' style='border-color:{c_h}'>", unsafe_allow_html=True)
                 
-                # BELKA NAGŁÓWKOWA
-                h_col1, h_col2, h_col3 = st.columns([5, 4, 1])
-                h_col1.markdown(f"<div class='{bdg_cls}'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
+                # --- DZIEŃ NAD CAŁOŚCIĄ I KRZYŻYK ---
+                h_col1, h_col2 = st.columns([5, 1])
+                h_col1.markdown(f"<div class='{bdg_cls}' style='margin-bottom: 10px;'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
                 
-                # PRZYDATNOŚĆ: WIELKIE LITERY I POGRUBIENIE
-                h_col2.markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:14px; text-align:center; line-height:35px;'>PRZYDATNOŚĆ: {d['prz']}</div>", unsafe_allow_html=True)
-                
-                if h_col3.button("❌", key=f"del_{dk}"):
+                if h_col2.button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
                     zapisz_dane(st.session_state.kolejka); st.rerun()
 
-                # SUMA I ZMIANY
+                # --- SUMA I PRZYDATNOŚĆ W JEDNEJ BELCE ---
                 zm = "2 zmiany" if d["czas_suma"] > 420 else "1 zmiana"
                 godz = "06-15 / 15-23" if nad else "06-14 / 14-22"
+                
                 st.markdown(f"""
                     <div class='glowica-info {glow_cls}'>
-                        <b style='font-size:15px; color:#000;'>SUMA: {int(d['suma'])} palet</b><br>
-                        <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
+                        <div>
+                            <b style='font-size:15px; color:#000;'>SUMA: {int(d['suma'])} palet</b><br>
+                            <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
+                        </div>
+                        <div style='text-align: right;'>
+                            <b style='color:#d32f2f; font-size:11px;'>PRZYDATNOŚĆ:</b><br>
+                            <b style='color:#d32f2f; font-size:15px;'>{d['prz']}</b>
+                        </div>
                     </div>
                 """, unsafe_allow_html=True)
 
