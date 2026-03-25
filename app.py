@@ -4,9 +4,30 @@ import pandas as pd
 import json
 import os
 
-# --- KONFIGURACJA ZAPISU DANYCH ---
+# --- KONFIGURACJA ---
 PLIK_DANYCH = "dane_zamowien.json"
+st.set_page_config(page_title="Konfekcja SM - System Planowania", layout="wide")
 
+# Stylizacja luksusowa/industrialna
+st.markdown("""
+    <style>
+    .main { background-color: #FDFBF7; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #f1f1f1;
+        border-radius: 10px 10px 0px 0px;
+        padding: 10px 20px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #1f77b4 !important;
+        color: white !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- FUNKCJE DANYCH ---
 def wczytaj_dane():
     if os.path.exists(PLIK_DANYCH):
         try:
@@ -14,252 +35,153 @@ def wczytaj_dane():
                 dane = json.load(f)
                 for z in dane:
                     z['termin'] = datetime.datetime.strptime(z['termin'], "%Y-%m-%d").date()
-                    # Obsługa nowej daty startu dla starych rekordów
-                    if 'start_produkcji' in z:
-                        z['start_produkcji'] = datetime.datetime.strptime(z['start_produkcji'], "%Y-%m-%d").date()
-                    else:
-                        z['start_produkcji'] = datetime.date.today()
+                    z['start_produkcji'] = datetime.datetime.strptime(z.get('start_produkcji', datetime.date.today().strftime("%Y-%m-%d")), "%Y-%m-%d").date()
                 return dane
-        except Exception:
-            return []
+        except: return []
     return []
 
 def zapisz_dane(kolejka):
-    try:
-        kolejka_do_zapisu = []
-        for z in kolejka:
-            z_kopia = z.copy()
-            z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
-            z_kopia['start_produkcji'] = z_kopia['start_produkcji'].strftime("%Y-%m-%d")
-            kolejka_do_zapisu.append(z_kopia)
-        with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
-            json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
-    except Exception:
-        pass
-
-DNI_PL = {
-    "Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa",
-    "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"
-}
-
-WYDAJNOSC = {
-    "232": 84, "233": 56, "236": 84, "261": 84,
-    "246": 84, "254": 52.5, "1221217": 120,
-    "1221070": 52.5, "1221181": 210
-}
-
-st.set_page_config(page_title="Konfekcja SM - Harmonogram", layout="wide")
-
-if 'kolejka' not in st.session_state:
-    st.session_state.kolejka = wczytaj_dane()
+    kolejka_do_zapisu = []
+    for z in kolejka:
+        z_kopia = z.copy()
+        z_kopia['termin'] = z_kopia['termin'].strftime("%Y-%m-%d")
+        z_kopia['start_produkcji'] = z_kopia['start_produkcji'].strftime("%Y-%m-%d")
+        kolejka_do_zapisu.append(z_kopia)
+    with open(PLIK_DANYCH, "w", encoding="utf-8") as f:
+        json.dump(kolejka_do_zapisu, f, ensure_ascii=False, indent=4)
 
 # --- LOGIKA PLANOWANIA ---
-@st.cache_data
-def generuj_plan_forward(kolejka_tuple, data_globalnego_startu):
-    if not kolejka_tuple: 
-        return {}, []
+DNI_PL = {"Monday": "Pon", "Tuesday": "Wt", "Wednesday": "Śr", "Thursday": "Czw", "Friday": "Pt", "Saturday": "Sob", "Sunday": "Nd"}
+WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
 
+@st.cache_data
+def generuj_plan_finalny(kolejka_tuple, data_globalna):
+    if not kolejka_tuple: return {}, []
     zadania = [dict(z) for z in kolejka_tuple]
-    plan_dni = {}
-    raport = []
-    MAX_CZAS_DOBA = 840 
-    ostatni_art = None 
+    plan_dni, raport, MAX_CZAS = {}, [], 840
+    ostatni_art = None
 
     while zadania:
         zadania.sort(key=lambda x: (x['termin'], x['art']))
-        najpilniejszy_termin = zadania[0]['termin']
-        idx_wybranego = -1
-        
-        if ostatni_art is not None:
-            for i, z in enumerate(zadania):
-                if z['termin'] == najpilniejszy_termin and z['art'] == ostatni_art:
-                    idx_wybranego = i
-                    break
-        
-        if idx_wybranego == -1:
-            idx_wybranego = 0
-
-        z = zadania.pop(idx_wybranego)
-        ile = z['ile']
-        wyd = WYDAJNOSC.get(z["art"], 70) 
-        
-        # LOGIKA STARTU: bierze pod uwagę albo globalny start, albo specyficzny start zamówienia
-        data_kursora = max(data_globalnego_startu, z.get('start_produkcji', data_globalnego_startu))
+        z = zadania.pop(0) # Prio: najkrótszy termin
+        ile, wyd = z['ile'], WYDAJNOSC.get(z["art"], 70)
+        data_k = max(data_globalna, z['start_produkcji'])
         
         while ile > 0:
-            if data_kursora.weekday() == 6: 
-                data_kursora += datetime.timedelta(days=1)
-                continue
-                
-            d_key = data_kursora.strftime("%Y-%m-%d")
-            if d_key not in plan_dni:
-                plan_dni[d_key] = MAX_CZAS_DOBA
+            if data_k.weekday() == 6: data_k += datetime.timedelta(days=1); continue
+            d_key = data_k.strftime("%Y-%m-%d")
+            if d_key not in plan_dni: plan_dni[d_key] = MAX_CZAS
             
-            wolny_czas = plan_dni[d_key]
+            dostepny = plan_dni[d_key] if data_k != z['termin'] else max(0, 420 - (MAX_CZAS - plan_dni[d_key]))
+            produkcja = min(dostepny // wyd, ile)
             
-            if data_kursora == z['termin']:
-                zajete_juz = MAX_CZAS_DOBA - wolny_czas
-                dostepny_dzis = max(0, 420 - zajete_juz)
-            else:
-                dostepny_dzis = wolny_czas
-                
-            produkcja = min(dostepny_dzis // wyd, ile)
-            is_nadgodziny = False
-            
-            jutro = data_kursora + datetime.timedelta(days=1)
-            if jutro.weekday() == 6: jutro += datetime.timedelta(days=1)
-            
-            if jutro == z['termin']:
-                d_key_jutro = jutro.strftime("%Y-%m-%d")
-                wolne_jutro = plan_dni.get(d_key_jutro, MAX_CZAS_DOBA)
-                zajete_jutro = MAX_CZAS_DOBA - wolne_jutro
-                dostepne_jutro = max(0, 420 - zajete_jutro)
-                potrzeba_na_jutro = (ile - produkcja) * wyd
-                if potrzeba_na_jutro > dostepne_jutro:
-                    dodatek = (ile - produkcja) - (dostepne_jutro // wyd)
-                    if dodatek > 0:
-                        produkcja += dodatek
-                        is_nadgodziny = True
-
-            if data_kursora == z['termin'] and ile > produkcja:
-                produkcja = ile 
-                is_nadgodziny = True
-                
             if produkcja > 0:
-                raport.append({
-                    "Data": data_kursora.strftime("%d.%m"),
-                    "Dzień": DNI_PL.get(data_kursora.strftime("%A")),
-                    "Art": z["art"],
-                    "Palety": int(produkcja),
-                    "Kraj": z.get("kraj", "Czechy"),
-                    "Wysyłka": z["termin"].strftime("%d.%m"),
-                    "StartProd": z["start_produkcji"].strftime("%d.%m"),
-                    "dt_sort": data_kursora,
-                    "termin_sort": z["termin"],
-                    "Nadgodziny": is_nadgodziny
-                })
+                raport.append({"Data": data_k.strftime("%d.%m"), "Dzień": DNI_PL.get(data_k.strftime("%A")), "Art": z["art"], "Palety": int(produkcja), "Kraj": z["kraj"], "Wysyłka": z["termin"].strftime("%d.%m"), "dt_s": data_k})
                 ile -= produkcja
                 plan_dni[d_key] -= (produkcja * wyd)
-                if ile > 0: plan_dni[d_key] = 0
-                ostatni_art = z["art"]
-            
-            if ile > 0:
-                data_kursora += datetime.timedelta(days=1)
+                if ile > 0: plan_dni[d_key] = 0 # Blokada maszyny do końca dnia
+            if ile > 0: data_k += datetime.timedelta(days=1)
 
+    # Grupowanie pod widok
     widok = {}
-    raport.sort(key=lambda x: (x['dt_sort'], x['termin_sort'], x['Art']))
-    for r in raport:
+    for r in sorted(raport, key=lambda x: x['dt_s']):
         dk = r['Data']
-        if dk not in widok: 
-            widok[dk] = {"dz": r['Dzień'], "suma": 0, "p": [], "nad": False, "czas_zajety": 0}
-        widok[dk]["p"].append(r)
-        widok[dk]["suma"] += r["Palety"]
-        widok[dk]["czas_zajety"] += r["Palety"] * WYDAJNOSC.get(r["Art"], 70)
-        if r["Nadgodziny"] or widok[dk]["czas_zajety"] > MAX_CZAS_DOBA:
-            widok[dk]["nad"] = True
+        if dk not in widok: widok[dk] = {"dz": r['Dzień'], "p": [], "suma": 0}
+        widok[dk]["p"].append(r); widok[dk]["suma"] += r["Palety"]
     return widok, raport
 
-# --- INTERFEJS BOCZNY ---
-with st.sidebar:
-    st.title("Konfekcja SM")
-    data_globalnego_startu = st.date_input("📅 Ogólny start maszyn", datetime.date.today())
-    st.divider()
+# --- START APLIKACJI ---
+if 'kolejka' not in st.session_state:
+    st.session_state.kolejka = wczytaj_dane()
 
-    if st.button("➕ DODAJ NOWE ZAMÓWIENIE", type="primary", use_container_width=True): 
-        st.session_state.pokaz_f = True
-    
-    if st.button("🗑️ WYCZYŚĆ PLAN", use_container_width=True):
-        st.session_state.kolejka = []
-        zapisz_dane([])
-        st.cache_data.clear()
-        st.rerun()
+# NAWIGACJA GÓRNA (OKIENKA)
+tab1, tab2 = st.tabs(["📥 WPISYWANIE ZAMÓWIEŃ", "🗓️ GOTOWY HARMONOGRAM PRODUKCJI"])
 
-    st.divider()
-    if st.session_state.kolejka:
-        st.subheader("✏️ Edytuj zamówienia")
-        tab_cz, tab_sk = st.tabs(["🇨🇿 CZ", "🇸🇰 SK"])
-        for tab, kraj_id in zip([tab_cz, tab_sk], ["Czechy", "Słowacja"]):
-            with tab:
-                for i, z in enumerate(st.session_state.kolejka):
-                    if z['kraj'] == kraj_id:
-                        with st.expander(f"Art {z['art']} ({z['termin'].strftime('%d.%m')})"):
-                            z['ile'] = st.number_input("Palety", value=int(z['ile']), key=f"il_{i}")
-                            z['start_produkcji'] = st.date_input("Start produkcji", value=z['start_produkcji'], key=f"st_{i}")
-                            if st.button("Usuń", key=f"del_{i}"):
-                                st.session_state.kolejka.pop(i)
-                                zapisz_dane(st.session_state.kolejka)
-                                st.rerun()
-                            zapisz_dane(st.session_state.kolejka)
-
-# --- GŁÓWNY EKRAN ---
-if st.session_state.get('pokaz_f'):
-    with st.form("add_form"):
-        st.subheader("Nowe Zamówienie")
-        c1, c2, c3 = st.columns(3)
-        kraj = c1.selectbox("Kraj", ["Czechy", "Słowacja"])
-        # TUTAJ DODANA MOŻLIWOŚĆ WYBORU DATY STARTU DLA ZAMÓWIENIA
-        st_prod = c2.date_input("Kiedy można zacząć?", datetime.date.today())
-        term_wys = c3.date_input("Termin wysyłki", datetime.date.today() + datetime.timedelta(days=3))
+# --- OKIENKO 1: DODAWANIE ---
+with tab1:
+    st.subheader("Dodaj nowe zamówienia do bazy")
+    with st.form("fm_nowe", clear_on_submit=True):
+        col_a, col_b, col_c = st.columns(3)
+        f_kraj = col_a.selectbox("Kierunek", ["Czechy", "Słowacja"])
+        f_start = col_b.date_input("Można produkować od:", datetime.date.today())
+        f_wysylka = col_c.date_input("Termin wyjazdu:", datetime.date.today() + datetime.timedelta(days=3))
         
-        st.write("Ilość palet per artykuł:")
-        cols = st.columns(3)
-        temp_dodaj = []
+        st.write("Wpisz ilości palet:")
+        cols_art = st.columns(5)
+        nowe_paczka = []
         for i, art_id in enumerate(WYDAJNOSC.keys()):
-            with cols[i % 3]:
+            with cols_art[i % 5]:
                 v = st.number_input(f"Art {art_id}", min_value=0, step=1)
-                if v > 0: temp_dodaj.append({"art": art_id, "ile": v, "termin": term_wys, "start_produkcji": st_prod, "kraj": kraj})
+                if v > 0:
+                    nowe_paczka.append({"art": art_id, "ile": v, "termin": f_wysylka, "start_produkcji": f_start, "kraj": f_kraj})
         
-        if st.form_submit_button("Dodaj do planu"):
-            st.session_state.kolejka.extend(temp_dodaj)
+        if st.form_submit_button("ZAPISZ I DODAJ DO KOLEJKI", use_container_width=True):
+            st.session_state.kolejka.extend(nowe_paczka)
             zapisz_dane(st.session_state.kolejka)
-            st.session_state.pokaz_f = False
+            st.success(f"Dodano {len(nowe_paczka)} artykułów.")
             st.rerun()
 
-if st.session_state.kolejka:
-    k_tuple = tuple(tuple(d.items()) for d in st.session_state.kolejka)
-    dni, raport_surowy = generuj_plan_forward(k_tuple, data_globalnego_startu)
-
-    st.subheader(f"🗓️ Harmonogram od {data_globalnego_startu.strftime('%d.%m')}")
-    grid = st.columns(5)
-    sorted_dni = sorted(dni.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))
-    
-    for i, dk in enumerate(sorted_dni):
-        with grid[i % 5]:
-            inf = dni[dk]
-            border = "#ffb300" if inf["nad"] else "#e0e0e0"
-            bg = "#fffcf2" if inf["nad"] else "white"
-            
-            karta_html = f"<div style='border:2px solid {border}; border-radius:8px; padding:10px; background-color:{bg}; margin-bottom:15px; min-height:280px;'>"
-            karta_html += f"<div style='font-size:16px; font-weight:bold; color:#1f77b4;'>{dk} ({inf['dz']})</div>"
-            karta_html += f"<div style='font-size:13px; color:green; font-weight:bold; border-bottom:1px solid #ddd; padding-bottom:5px; margin-bottom:8px;'>Suma: {inf['suma']} pal.</div>"
-            
-            for p in inf["p"]:
-                is_sk = p["Kraj"] == "Słowacja"
-                k_bg = "#a5d6a7" if is_sk else "#f1f1f1"
-                karta_html += f"<div style='background-color:{k_bg}; padding:5px; border-radius:4px; margin-bottom:5px; border:1px solid #ccc; font-size:11px;'>"
-                karta_html += f"<b>Art {p['Art']}</b>: {p['Palety']} pal.<br>"
-                karta_html += f"<span style='color:#666;'>Start: {p['StartProd']} | Wys: {p['Wysyłka']}</span></div>"
-                
-            karta_html += "</div>"
-            st.markdown(karta_html, unsafe_allow_html=True)
-
-    # --- TABELA KONTROLNA ---
     st.divider()
-    st.subheader("🔍 Status realizacji zamówień")
-    df_z = pd.DataFrame(st.session_state.kolejka)
-    df_z['Wysyłka'] = df_z['termin'].apply(lambda x: x.strftime("%d.%m"))
-    res = df_z.groupby(['Wysyłka', 'kraj', 'art'])['ile'].sum().reset_index()
-    res = res.rename(columns={'kraj': 'Kraj', 'art': 'Artykuł', 'ile': 'Zamówiono'})
-    
-    if raport_surowy:
-        df_r = pd.DataFrame(raport_surowy)
-        res_r = df_r.groupby(['Wysyłka', 'Kraj', 'Art'])['Palety'].sum().reset_index()
-        res_r = res_r.rename(columns={'Art': 'Artykuł', 'Palety': 'Zaplanowano'})
-        final = pd.merge(res, res_r, on=['Wysyłka', 'Kraj', 'Artykuł'], how='left').fillna(0)
+    st.subheader("Aktualna lista w kolejce (do zaplanowania)")
+    if st.session_state.kolejka:
+        df_list = pd.DataFrame(st.session_state.kolejka)
+        st.dataframe(df_list, use_container_width=True)
+        if st.button("WYCZYŚĆ CAŁĄ KOLEJKĘ"):
+            st.session_state.kolejka = []
+            zapisz_dane([])
+            st.rerun()
     else:
-        final = res.copy(); final['Zaplanowano'] = 0
-        
-    final['Status'] = final.apply(lambda x: "✅" if x['Zamówiono'] == x['Zaplanowano'] else "⏳", axis=1)
-    st.dataframe(final.style.apply(lambda r: ['background-color: #c8e6c9' if r.Kraj == 'Słowacja' else ''] * len(r), axis=1), use_container_width=True, hide_index=True)
-else:
-    st.info("Dodaj zamówienia, aby zobaczyć plan.")
+        st.info("Kolejka jest pusta.")
+
+# --- OKIENKO 2: GOTOWY HARMONOGRAM ---
+with tab2:
+    st.subheader("Rozpiska porcjowania na gotowo")
+    c1, c2 = st.columns([1, 3])
+    data_g = c1.date_input("Dzień startu maszyn:", datetime.date.today())
+    
+    if st.session_state.kolejka:
+        # Konwersja do tuple dla cache
+        k_tuple = tuple(tuple(sorted(d.items())) for d in st.session_state.kolejka)
+        dni_plan, raport_raw = generuj_plan_finalny(k_tuple, data_g)
+
+        # WIDOK KAFELKOWY (NA GOTOWO)
+        st.markdown("---")
+        kafelki = st.columns(5)
+        for i, dk in enumerate(dni_plan.keys()):
+            with kafelki[i % 5]:
+                d_info = dni_plan[dk]
+                
+                # Karta dnia
+                html_karta = f"""
+                <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 15px; background-color: white; min-height: 350px; box-shadow: 2px 2px 10px rgba(0,0,0,0.1);">
+                    <div style="font-size: 20px; font-weight: bold; color: #1f77b4; border-bottom: 2px solid #eee; margin-bottom: 10px;">{dk} ({d_info['dz']})</div>
+                    <div style="font-size: 14px; color: #28a745; font-weight: bold; margin-bottom: 15px;">Suma: {d_info['suma']} palet</div>
+                """
+                
+                for p in d_info['p']:
+                    # Kolorystyka Słowacji (bardziej zielona)
+                    is_sk = p['Kraj'] == "Słowacja"
+                    bg_col = "#c8e6c9" if is_sk else "#f8f9fa"
+                    border_col = "#2e7d32" if is_sk else "#ccc"
+                    
+                    html_karta += f"""
+                    <div style="background-color: {bg_col}; border: 1px solid {border_col}; border-radius: 6px; padding: 8px; margin-bottom: 8px; font-size: 13px;">
+                        <b>Art {p['Art']}</b>: {p['Palety']} pal.<br>
+                        <span style="font-size: 11px; color: #666;">Wysyłka: {p['Wysyłka']} ({p['Kraj']})</span>
+                    </div>
+                    """
+                
+                html_karta += "</div>"
+                st.markdown(html_karta, unsafe_allow_html=True)
+
+        st.divider()
+        st.subheader("Podsumowanie zbiorcze (Kontrola)")
+        if raport_raw:
+            df_rep = pd.DataFrame(raport_raw)
+            # Podświetlenie Słowacji w tabeli
+            def style_sk(row):
+                return ['background-color: #a5d6a7' if row.Kraj == 'Słowacja' else ''] * len(row)
+            st.dataframe(df_rep.style.apply(style_sk, axis=1), use_container_width=True, hide_index=True)
+            
+    else:
+        st.warning("Najpierw dodaj zamówienia w pierwszym okienku!")
