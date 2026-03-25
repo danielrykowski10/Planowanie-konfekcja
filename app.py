@@ -28,29 +28,44 @@ st.markdown("""
     .karta-dnia {
         border: 2px solid #2E7D32; 
         border-radius: 12px; 
-        padding: 12px; 
+        padding: 15px; 
         background-color: white; 
         margin-bottom: 20px;
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
     }
-    /* RAMKA DATY (BADGE) */
+    /* RAMKA DATY */
     .date-badge {
         border: 2px solid #1B5E20;
         background-color: #F1F8E9;
         border-radius: 8px;
         padding: 4px 10px;
-        display: inline-block;
         font-weight: bold;
         color: #1B5E20;
+        display: inline-block;
     }
     .date-badge-nad {
         border: 2px solid #E65100;
         background-color: #FFF3E0;
         border-radius: 8px;
         padding: 4px 10px;
-        display: inline-block;
         font-weight: bold;
         color: #E65100;
+        display: inline-block;
+    }
+    /* SEKCOJA SUMY */
+    .suma-section {
+        background-color: #F1F8E9;
+        padding: 8px;
+        border-radius: 8px;
+        margin-top: 10px;
+        margin-bottom: 10px;
+    }
+    .suma-section-nad {
+        background-color: #FFF3E0;
+        padding: 8px;
+        border-radius: 8px;
+        margin-top: 10px;
+        margin-bottom: 10px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -81,7 +96,6 @@ def zapisz_dane(kolejka):
 DNI_PL = {"Monday": "Poniedziałek", "Tuesday": "Wtorek", "Wednesday": "Środa", "Thursday": "Czwartek", "Friday": "Piątek", "Saturday": "Sobota", "Sunday": "Niedziela"}
 WYDAJNOSC = {"232": 84, "233": 56, "236": 84, "261": 84, "246": 84, "254": 52.5, "1221217": 120, "1221070": 52.5, "1221181": 210}
 
-# --- LOGIKA PLANOWANIA ---
 def generuj_plan_finalny(kolejka, pracujemy_niedziela):
     if not kolejka: return {}, []
     zadania = [dict(z) for z in kolejka]
@@ -120,18 +134,13 @@ def generuj_plan_finalny(kolejka, pracujemy_niedziela):
         if r["nad"]: widok[dk]["ma_nad"] = True
     return widok, raport
 
-# --- PROGRAM GŁÓWNY ---
+# --- PROGRAM ---
 if 'kolejka' not in st.session_state:
     st.session_state.kolejka = wczytaj_dane()
 
-with st.sidebar:
-    st.header("⚙️ OPCJE")
-    pracujemy_niedziela = st.checkbox("Planuj pracę w Niedziele", value=True)
-    st.divider()
+tab1, tab2 = st.tabs(["📥 WPISYWANIE", "📋 HARMONOGRAM NA HALĘ"])
 
-t1, t2 = st.tabs(["📥 WPISYWANIE", "📋 HARMONOGRAM NA HALĘ"])
-
-with t1:
+with tab1:
     with st.form("f1", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         kraj = c1.selectbox("Kierunek", ["Czechy", "Słowacja"])
@@ -155,9 +164,9 @@ with t1:
         if st.button("USUŃ WSZYSTKO"):
             st.session_state.kolejka = []; zapisz_dane([]); st.rerun()
 
-with t2:
+with tab2:
     if st.session_state.kolejka:
-        dni_plan, _ = generuj_plan_finalny(st.session_state.kolejka, pracujemy_niedziela)
+        dni_plan, _ = generuj_plan_finalny(st.session_state.kolejka, True)
         grid = st.columns(5)
         for i, dk in enumerate(sorted(dni_plan.keys(), key=lambda x: datetime.datetime.strptime(x, "%d.%m"))):
             with grid[i % 5]:
@@ -165,35 +174,38 @@ with t2:
                 nad = d["ma_nad"] or d["czas_suma"] > 840
                 c_h = "#E65100" if nad else "#1B5E20"
                 badge_class = "date-badge-nad" if nad else "date-badge"
+                suma_class = "suma-section-nad" if nad else "suma-section"
                 
-                # --- ZUNIFIKOWANY NAGŁÓWEK (Data, Przydatność i X w jednym) ---
-                # Używamy kolumn Streamlit, ale bardzo ciasno ułożonych
-                header_cols = st.columns([5, 4, 1])
+                # --- START KARTY ---
+                st.markdown(f"<div class='karta-dnia' style='border-color:{c_h}'>", unsafe_allow_html=True)
                 
-                # 1. Data porcjowania (w ramce)
-                header_cols[0].markdown(f"<div class='{badge_class}' style='font-size:13px;'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
-                
-                # 2. Data przydatności (pogrubiona)
-                header_cols[1].markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:13px; line-height:30px; text-align:center;'>PRZ: {d['prz']}</div>", unsafe_allow_html=True)
-                
-                # 3. Krzyżyk (X)
-                if header_cols[2].button("❌", key=f"del_{dk}"):
+                # NAGŁÓWEK (Data, PRZ, X w jednym rzędzie)
+                h_col1, h_col2, h_col3 = st.columns([5, 4, 1])
+                h_col1.markdown(f"<div class='{badge_class}' style='font-size:12px;'>{dk} ({d['dz']})</div>", unsafe_allow_html=True)
+                h_col2.markdown(f"<div style='color:#d32f2f; font-weight:bold; font-size:12px; line-height:30px; text-align:center;'>PRZ: {d['prz']}</div>", unsafe_allow_html=True)
+                if h_col3.button("❌", key=f"del_{dk}"):
                     idxs = set(p['orig_idx'] for p in d['p'])
                     st.session_state.kolejka = [z for idx, z in enumerate(st.session_state.kolejka) if idx not in idxs]
                     zapisz_dane(st.session_state.kolejka); st.rerun()
 
-                # --- TREŚĆ KARTY ---
+                # PODSUMOWANIE (Suma i Zmiany pod nagłówkiem)
                 zm = "2 zmiany" if d["czas_suma"] > 420 else "1 zmiana"
                 godz = "06-15 / 15-23" if nad else "06-14 / 14-22"
-                bg_h = "#FFF3E0" if nad else "#F1F8E9"
                 
-                html = f"""<div class='karta-dnia' style='border-color:{c_h}'>
-                <div style='background:{bg_h}; padding:5px; border-radius:5px; margin-bottom:10px;'>
-                <b>SUMA: {int(d['suma'])} palet</b><br>
-                <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
-                </div>"""
+                st.markdown(f"""
+                <div class='{suma_class}'>
+                    <b style='font-size:15px; color:#000;'>SUMA: {int(d['suma'])} palet</b><br>
+                    <b style='color:#FF0000; font-size:12px;'>{zm} ({godz})</b>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # LISTA ARTYKUŁÓW
                 for p in d['p']:
                     col = "#A5D6A7" if p['Kraj'] == "Słowacja" else "#F1F1F1"
-                    html += f"<div style='background:{col}; border:1px solid #ccc; border-radius:5px; padding:5px; margin-bottom:5px; font-size:12px; color:#000;'>"
-                    html += f"<b>Art {p['Art']} — {int(p['Palety'])} pal.</b><br>Auto: {p['Wysyłka']}</div>"
-                st.markdown(html + "</div>", unsafe_allow_html=True)
+                    st.markdown(f"""
+                    <div style='background:{col}; border:1px solid #ccc; border-radius:6px; padding:6px; margin-bottom:6px; font-size:12px; color:#000;'>
+                        <b>Art {p['Art']} — {int(p['Palety'])} pal.</b><br>Auto: {p['Wysyłka']}
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("</div>", unsafe_allow_html=True)
